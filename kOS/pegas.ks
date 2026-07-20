@@ -21,9 +21,6 @@ RUN pegas_addons.
 //	The following is absolutely necessary to run UPFG fast enough.
 SET CONFIG:IPU TO SETTINGS["kOS_IPU"].
 
-//	Ensure vehicle control is executed from the correct part
-CORE:PART:CONTROLFROM().
-
 //	Initialize global flags and constants
 GLOBAL upfgStage IS -1.				//	System initializes at passive guidance
 GLOBAL eventPointer IS -1.			//	Index of the last executed event (-1 means none yet)

@@ -17,6 +17,12 @@ FUNCTION atmosphericSteeringControl {
 
 	DECLARE PARAMETER steeringRoll.	//	Expects a scalar
 
+	//	If the FAR ascent addon has taken over in full-control mode, skip PEGAS
+	//	passive steering to avoid duplicate messages and one-frame conflicts.
+	IF DEFINED farAscentOverridesPassive AND farAscentOverridesPassive {
+		RETURN.
+	}
+
 	IF controls:HASKEY("pitchProgram") {
 		pitchProgramControl(steeringRoll).
 	} ELSE {
