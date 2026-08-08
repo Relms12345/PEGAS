@@ -234,7 +234,7 @@ You don't want your payload fairing jettison event to accidentally separate the 
 Recommended approach is to avoid scheduling other staging events near the main vehicle staging.
 
 One unique thing about sequence is that it controls the lift-off too.
-You **need to** have an entry at time zero that releases the launch clamps.
+You **need to** have a `liftoff` entry at time zero. It waits for the configured live TWR before releasing the launch clamps.
 
 ##### Note about delegate events
 If you like to organize your code into boot files with vehicle configs and mission scripts with target parameters, you will run into a problem that's well explained in [this section](https://ksp-kos.github.io/KOS_DOC/structures/misc/kosdelegate.html#attribute:KOSDELEGATE:ISDEAD) of kOS documentation.
@@ -259,18 +259,62 @@ Important note: selecting target will only work for bodies orbiting the Earth (o
 Need to drop SRBs while in atmosphere?  
 Jettison paylod fairing when you're confident the altitude is high enough?  
 Set up the `sequence` accordingly.  
-Bear in mind that it needs to have at least one element: the release clamps command at time zero!  
+Bear in mind that it needs to have at least one element: a `liftoff` event at time zero to gate clamp release on live TWR.
 Those steps get your vehicle ready (you may enclose them in a single script and bind it as a boot file to your vehicle).
 4. Now the only thing you need to do is specify where you want it to go: define your `mission`.
 5. When in kOS terminal, load those 4 variables (boot files or by simply running scripts).
 6. `RUN pegas.`
 
-If something is going wrong mid-flight, you can use the standard action group `ABORT` to make PEGAS relinquish all control and exit.
+When `controls["abort"]` is present and enabled, PEGAS monitors complete and partial engine failure, corroborated
+structural breakup, and excessive vehicle rotation. A total angular rate of `spinMaxAngularRate` that persists for
+`spinFailureDelay` seconds requests immediate escape. Detection ignores commanded roll transitions and brief intentional
+structure-change windows, but remains active afterward to catch a sustained post-separation tumble. During active guidance,
+a recoverable engine malfunction can retarget to an atmosphere-height-plus-10-km contingency orbit. Early airborne
+failures, infeasible ATO cases, RUD, and confirmed spins use the standard `ABORT` action group and post-abort guidance. Engine
+malfunctions detected while the vehicle is still grounded instead command idle throttle and terminate without firing `ABORT`.
+Intentional stage, jettison, and engine-shutdown events briefly pause engine monitoring while PEGAS refreshes its
+active-engine baseline. Monitoring is also paused while commanded throttle is below `thrustLossDetectThrottle`.
+
+For crewed launch escape, set `controls["abort"]["escapeSystem"]` to `"crew"` or `"auto"`.
+For uncrewed protected cargo, set it explicitly to `"payload"`. In both cases:
+* configure the craft's `ABORT` action group to separate the protected vehicle and ignite its escape motors;
+* install the kOS CPU, independent electrical power, and steering authority on the protected side of the separation;
+* mark the sequence event that jettisons the escape hardware with `"escapeJettison", TRUE`;
+* use `"structureChange", TRUE` on custom delegate/action events that intentionally separate parts.
+
+Optionally tag an LES part and set `controls["abort"]["lesPartTag"]` to that tag. PEGAS only tracks the LES if the
+tag matches at initialization. If the tagged part later disappears and an engine-failure ATO cannot be established
+or becomes infeasible, PEGAS fires `ABORT` and points the surviving vehicle surface-retrograde for the configured
+guidance time. An empty or initially unmatched tag disables this ballistic fallback. Manual abort and RUD handling
+remain unchanged. PEGAS enables RCS for every abort and leaves it enabled after releasing control, overriding the
+state selected by the `ABORT` action group so the protected vehicle retains attitude authority.
+
+During an LES abort, PEGAS tracks surface prograde for `escapeGuidanceTime` while the escape motor burns. It then
+turns the protected vehicle surface-retrograde and holds that attitude until landing or splashdown. Ballistic aborts
+begin retrograde guidance immediately. PEGAS preserves the last valid attitude at very low speed and does not deploy
+parachutes itself.
+
+ATO considers every remaining configured stage. A partial failure continues on the degraded stage when its thrust,
+delta-v, and UPFG burn duration remain viable. Otherwise PEGAS abandons that physical stage and immediately starts the
+next one using its separation, ullage, ignition, and spool-up configuration. This also works before normal UPFG
+activation. Sustainer-style vehicles can select the intended upper stage with `passiveAtoStage`; add an `atoStaging`
+lexicon to that vehicle stage if emergency activation requires a different sequence from nominal staging.
+
+Omit `controls["abort"]` to disable all contingency monitoring and response, including manual-ABORT handling. You can
+instead set `controls["abort"]["enabled"]` to `FALSE` when you want to disable monitoring but retain custom
+`minLaunchTWR` or `launchTimeout` values. The live-TWR gate always remains active. If its timeout expires, PEGAS
+commands idle throttle, leaves the clamps attached, and terminates without firing the `ABORT` action group.
+
+If the CPU is destroyed by the failure, software cannot command an escape. PEGAS also cannot safely attempt ATO after
+structural breakup because its mass, thrust, and staging model no longer describes the surviving vehicle.
+
+With contingency monitoring enabled, manual `ABORT` remains an immediate escape: the action group may have fired
+hardware before PEGAS observes its state.
 
 ##### Suspected bug in kOS
 Note that if you revert flight while controls are locked by kOS, the attempt to lock them again (in the new flight) will result in `object reference not set` error.
 When that happens you will have to leave and reenter the vehicle view.
-For experiments involving PEGAS, it's best to `ABORT` flight using the standard action group (hit backspace) before you revert.
+For experiments involving PEGAS, it is still best to `ABORT` flight using the standard action group (hit backspace) before you revert.
 
 ---
 
@@ -332,7 +376,7 @@ Remember, we **always** have to have an event at T=0 to execute the liftoff.
 But in RO we want to ignite our engines before that.
 So our sequence might look like this:
 * `LEXICON("time", -4, "type", "stage", "message", "NK-33 ignition")` (ignition *before* liftoff)
-* `LEXICON("time", 0, "type", "stage", "message", "LIFTOFF!")` (mandatory entry)
+* `LEXICON("time", 0, "type", "liftoff", "message", "LIFTOFF!")` (mandatory entry)
 * `LEXICON("time", 200, "type", "jettison", "massLost", 2694, "message", "Payload fairing jettison")`  
 (finally we drop the fairings; note how we're using type `jettison` and not just `stage`, even though they do the same thing in-game (i.e. hit spacebar to stage) - this `massLost` key will update the second stage definition by subtracting the jettisoned mass)
 

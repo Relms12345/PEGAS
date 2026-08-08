@@ -1,3 +1,5 @@
+@CLOBBERBUILTINS OFF.
+
 //	Atmospheric ascent library
 
 //	Calculate a steering vector for minimal angle of attack flight (surface-relative)

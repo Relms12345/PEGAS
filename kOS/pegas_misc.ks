@@ -1,3 +1,5 @@
+@CLOBBERBUILTINS OFF.
+
 //	Miscellaneous, user interface related functions.
 
 //	Initialize messaging system
@@ -42,6 +44,7 @@ FUNCTION createUI {
 	PRINT "| Tgo(stage)   =      s    Tgo =      s   |".
 	PRINT "| Throttle     =      %    Vgo =      m/s |".
 	PRINT "| Acceleration =      m/s2 (     G)       |".
+	PRINT "| Abort:          | Mode:                 |".
 	PRINT "|-----------------------------------------|".
 	PRINT "|               Current       Target      |".
 	PRINT "| Altitude    |        km   |        km   |".	//	Orbital info
@@ -160,7 +163,7 @@ FUNCTION refreshUI {
 
 	//	Section offsets, for easier extendability
 	LOCAL vehicleInfoOffset IS 8.	//	Reads: vehicle info section starts at row 8
-	LOCAL orbitalInfoOffset IS vehicleInfoOffset + 9.
+	LOCAL orbitalInfoOffset IS vehicleInfoOffset + 10.
 	LOCAL currentOrbitOffset IS 15.	//	Horizontal offset for the current orbit info
 	LOCAL targetOrbitOffset IS 29.	//	Horizontal offset for the target orbit info
 	LOCAL messageBoxOffset IS orbitalInfoOffset + 9.
@@ -175,6 +178,8 @@ FUNCTION refreshUI {
 	LOCAL stageVirtual IS FALSE.
 	LOCAL vehicleStatus IS "".
 	LOCAL upfgStatus IS "".
+	LOCAL abortStatus IS "DISABLED".
+	LOCAL abortMode IS "NONE".
 	LOCAL stageTgo IS 0.
 	LOCAL totalTgo IS 0.
 	LOCAL totalVgo IS 0.
@@ -234,6 +239,49 @@ FUNCTION refreshUI {
 			SET upfgStatus TO "converging...".
 		}
 	}
+	IF DEFINED abortState {
+		IF abortState["mode"] = "ato" {
+			SET abortStatus TO "ACTIVE".
+			SET abortMode TO "ATO".
+		} ELSE IF abortState["mode"] = "escape" OR abortState["mode"] = "escaped" {
+			SET abortStatus TO CHOOSE "COMPLETE" IF abortState["mode"] = "escaped" ELSE "ACTIVE".
+			IF abortState["source"] = "pad" {
+				SET abortMode TO "PAD".
+			} ELSE IF abortState["guidanceMode"] = "ballistic" {
+				SET abortMode TO "BALLISTIC".
+			} ELSE IF abortState["escapeSystem"] = "payload" {
+				SET abortMode TO "PAYLOAD".
+			} ELSE IF abortState["escapeSystem"] = "crew" {
+				SET abortMode TO "LES".
+			} ELSE {
+				SET abortMode TO "ESCAPE".
+			}
+		} ELSE IF abortEnabled {
+			SET abortStatus TO "ARMED".
+			SET abortMode TO "NOMINAL".
+		}
+		IF abortState["mode"] = "ato" {
+			SET vehicleStatus TO "ABORT TO ORBIT".
+			SET upfgStatus TO CHOOSE "ATO ENGAGED" IF upfgEngaged ELSE "ATO converging...".
+		} ELSE IF abortState["mode"] = "escape" OR abortState["mode"] = "escaped" {
+			IF abortState["source"] = "pad" {
+				SET vehicleStatus TO "PAD SHUTDOWN".
+			} ELSE IF abortState["guidanceMode"] = "ballistic" {
+				SET vehicleStatus TO "BALLISTIC ABORT".
+			} ELSE IF abortState["source"] = "rud" {
+				SET vehicleStatus TO "RUD - ESCAPE".
+			} ELSE IF abortState["source"] = "spin" {
+				SET vehicleStatus TO "SPIN - ESCAPE".
+			} ELSE IF abortState["escapeSystem"] = "payload" {
+				SET vehicleStatus TO "PAYLOAD ESCAPE".
+			} ELSE IF abortState["escapeSystem"] = "crew" {
+				SET vehicleStatus TO "LES ESCAPE".
+			} ELSE {
+				SET vehicleStatus TO "MISSION ABORT".
+			}
+			SET upfgStatus TO "disabled".
+		}
+	}
 
 	//	Print physical information
 	textPrint(stageName, vehicleInfoOffset + 0, 9, 41).
@@ -256,6 +304,8 @@ FUNCTION refreshUI {
 	numberPrint(100*throttle_, vehicleInfoOffset + 5, 17, 21, 0).
 	numberPrint(currentAcc, vehicleInfoOffset + 6, 17, 21).
 	numberPrint(currentAcc / CONSTANT:g0, vehicleInfoOffset + 6, 28, 32, 1).
+	textPrint(abortStatus, vehicleInfoOffset + 7, 8, 18).
+	textPrint(abortMode, vehicleInfoOffset + 7, 25, 42).
 
 	//	Print current vehicle orbital info
 	numberPrint(SHIP:ALTITUDE/1000,			orbitalInfoOffset + 0, currentOrbitOffset, currentOrbitOffset + 7).
@@ -339,6 +389,9 @@ FUNCTION makeMessage {
 	}
 	ELSE IF eType = "jettison" OR eType = "j" {
 		RETURN "Jettison (" + event["massLost"] + "kg)".
+	}
+	ELSE IF eType = "liftoff" OR eType = "l" {
+		RETURN "TWR-gated liftoff".
 	}
 	ELSE IF eType = "throttle" OR eType = "t" {
 		RETURN "Set throttle to " + event["throttle"].

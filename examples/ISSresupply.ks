@@ -1,3 +1,5 @@
+@CLOBBERBUILTINS OFF.
+
 //	Example mission - do not load this file directly, this is just for reference.
 
 //	The ISS resupply mission flown in the video (https://www.youtube.com/watch?v=NEQD7AQoLXk).

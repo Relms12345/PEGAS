@@ -1,3 +1,5 @@
+@CLOBBERBUILTINS OFF.
+
 //	Conic State Extrapolation
 //	Formulas follow H.D. Curtis, Orbital Mechanics for Engineering Students, Chapter 3.7
 //	Radius vector scaled by its magnitude, velocity scaled by circular speed sqrt(mu/ r0)

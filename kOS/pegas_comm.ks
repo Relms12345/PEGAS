@@ -1,3 +1,5 @@
+@CLOBBERBUILTINS OFF.
+
 //	Communication system functions
 
 //	Handles communication with other CPUs
@@ -173,6 +175,7 @@ FUNCTION command_engineShutdown {
 	IF errors { RETURN "ERROR (Could not shutdown specified engines)". }
 	//	If nothing went wrong while checking engine, execute the engine shutdown
 	FOR eng IN confirmedEngines { eng:SHUTDOWN. }
+	scheduleEngineBaselineRecache().
 	RETURN TRUE.
 }
 

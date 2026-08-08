@@ -1,3 +1,5 @@
+@CLOBBERBUILTINS OFF.
+
 GLOBAL _PEGAS_VERSION_ IS "v1.3.1".
 
 //	Check if all necessary variables have been defined, exit early otherwise.
@@ -15,6 +17,7 @@ RUN pegas_events.
 RUN pegas_upfg.
 RUN pegas_util.
 RUN pegas_misc.
+RUN pegas_abort.
 RUN pegas_comm.
 RUN pegas_addons.
 
@@ -34,6 +37,7 @@ GLOBAL upfgEngaged IS FALSE.		//	See upfgSteeringControl comments
 GLOBAL stagingInProgress IS FALSE.	//	See upfgSteeringControl comments
 GLOBAL prestageHold IS FALSE.		//	See upfgSteeringControl comments
 GLOBAL poststageHold IS FALSE.		//	See upfgSteeringControl comments
+GLOBAL flightPhase IS "preflight".
 
 //	Load user addons
 scanAddons().
@@ -61,22 +65,28 @@ IF controls:HASKEY("initialRoll") {
 }
 //	Set up the system for flight
 setVehicle().			//	Complete vehicle definition (as given by user)
+initAbortSystem().
 spawnCountdownEvents().
 buildFlightPlan(TRUE).	//	Generate the printable events before drawing the UI
 callHooks("init").		//	System initialized, run hooks
 
 
 //	PEGAS TAKES CONTROL OF THE MISSION
+SET flightPhase TO "passive".
 createUI().
 //	Prepare control for vertical ascent
 LOCK THROTTLE TO throttleSetting.
 LOCK STEERING TO steeringVector.
 //	Main loop - wait on launch pad, lift-off and passive guidance
-UNTIL ABORT {
+UNTIL abortState["mode"] = "escape" {
+	//	Manual abort, engine failure and structural anomaly detection
+	contingencyWatchdog().
+	IF abortState["mode"] = "escape" OR abortState["pendingStageOrdinal"] >= 0 { BREAK. }
 	//	User hooks
 	callHooks("passivePre").
 	//	Event handling
 	eventHandler().
+	IF abortState["mode"] = "escape" OR abortState["pendingStageOrdinal"] >= 0 { BREAK. }
 	//	Communication system handling
 	commsHandler().
 	//	Passive guidance
@@ -87,8 +97,6 @@ UNTIL ABORT {
 		pushUIMessage("Initiating UPFG!").
 		BREAK.
 	}
-	//	Thrust loss detection
-	thrustWatchdog().
 	//	UI - recalculate UPFG target solely for printing relative angle
 	SET upfgTarget["normal"] TO targetNormal(mission["inclination"], mission["LAN"]).
 	refreshUI().
@@ -97,67 +105,86 @@ UNTIL ABORT {
 	WAIT 0.
 }
 
+IF abortState["mode"] = "escape" { executeEscapeGuidance(). }
 
-//	ACTIVE GUIDANCE
-createUI().
-//	Initialize UPFG and all the structures it requires
-initializeVehicleForUPFG().
-SET upfgState TO acquireState().
-SET upfgInternal TO setupUPFG().
-//	Reassemble the flight plan after vehicle initialization
-buildFlightPlan(FALSE).
-//	Call user hooks
-callHooks("activeInit").
-//	Main loop - iterate UPFG (respective function controls attitude directly)
-UNTIL ABORT {
-	//	User hooks
-	callHooks("activePre").
-	//	Event handling
-	eventHandler().
-	//	Communication system handling
-	commsHandler().
-	//	Update UPFG target and vehicle state
-	SET upfgTarget["normal"] TO targetNormal(mission["inclination"], mission["LAN"]).
+IF abortState["mode"] <> "escaped" {
+	//	ACTIVE GUIDANCE
+	SET flightPhase TO "active".
+	createUI().
+	//	Initialize UPFG and all the structures it requires
+	initializeVehicleForUPFG().
 	SET upfgState TO acquireState().
-	//	Iterate UPFG and preserve its state
-	SET upfgInternal TO upfgSteeringControl(vehicle, upfgStage, upfgTarget, upfgState, upfgInternal).
-	//	Manage throttle, with the exception of initial portion of guided flight (where we're technically still flying the first stage).
-	IF activeGuidanceMode { throttleControl(). }
-	//	Transition to the attitude hold mode for the final seconds of the flight
-	IF terminalHoldConditions(upfgInternal) { BREAK. }
-	//	Thrust loss detection
-	thrustWatchdog().
-	//	Angular momentum criterion
-	IF angularMomentumWatchdog() {
-		pushUIMessage("Angular momentum criterion satisfied!", 5, PRIORITY_CRITICAL).  // override potential "UPFG reset" message
-		BREAK.
+	SET upfgInternal TO setupUPFG().
+	//	Reassemble the flight plan after vehicle initialization
+	buildFlightPlan(FALSE).
+	IF abortState["pendingStageOrdinal"] >= 0 {
+		IF NOT activatePendingAtoStage() { requestEscape("ABORT TO ORBIT STAGING UNAVAILABLE", "ato", FALSE). }
 	}
-	//	UI
-	refreshUI().
-	//	User hooks
-	callHooks("activePost").
-	//  No need to WAIT here - this loop is heavy enough: https://ksp-kos.github.io/KOS_DOC/general/cpu_hardware.html#wait
+	//	Call user hooks
+	callHooks("activeInit").
+	//	Main loop - iterate UPFG (respective function controls attitude directly)
+	UNTIL abortState["mode"] = "escape" {
+		contingencyWatchdog().
+		IF abortState["mode"] = "escape" { BREAK. }
+		//	User hooks
+		callHooks("activePre").
+		//	Event handling
+		eventHandler().
+		IF abortState["mode"] = "escape" { BREAK. }
+		//	Communication system handling
+		commsHandler().
+		//	Update UPFG target and vehicle state
+		SET upfgTarget["normal"] TO targetNormal(mission["inclination"], mission["LAN"]).
+		SET upfgState TO acquireState().
+		//	Iterate UPFG and preserve its state
+		SET upfgInternal TO upfgSteeringControl(vehicle, upfgStage, upfgTarget, upfgState, upfgInternal).
+		atoFeasibilityWatchdog().
+		IF abortState["mode"] = "escape" { BREAK. }
+		//	Manage throttle, with the exception of initial portion of guided flight (where we're technically still flying the first stage).
+		IF activeGuidanceMode { throttleControl(). }
+		//	Transition to the attitude hold mode for the final seconds of the flight
+		IF terminalHoldConditions(upfgInternal) { BREAK. }
+		//	Angular momentum criterion
+		IF angularMomentumWatchdog() {
+			pushUIMessage("Angular momentum criterion satisfied!", 5, PRIORITY_CRITICAL).  // override potential "UPFG reset" message
+			BREAK.
+		}
+		//	UI
+		refreshUI().
+		//	User hooks
+		callHooks("activePost").
+		//  No need to WAIT here - this loop is heavy enough: https://ksp-kos.github.io/KOS_DOC/general/cpu_hardware.html#wait
+	}
+	IF abortState["mode"] = "escape" { executeEscapeGuidance(). }
 }
-//	Final orbital insertion loop
-pushUIMessage( "Holding attitude for burn finalization!" ).
-LOCK STEERING TO "KILL".
-SET previousTime TO TIME:SECONDS.
-UNTIL ABORT {
-	LOCAL finalizeDT IS TIME:SECONDS - previousTime.
+
+IF abortState["mode"] <> "escaped" {
+	//	Final orbital insertion loop
+	SET flightPhase TO "terminal".
+	pushUIMessage( "Holding attitude for burn finalization!" ).
+	LOCK STEERING TO "KILL".
 	SET previousTime TO TIME:SECONDS.
-	SET upfgInternal["tgo"] TO upfgInternal["tgo"] - finalizeDT.
-	//	Exit the loop before entering the next refresh cycle.
-	//	We can't do "tgo < 0" as then we still didn't break if the previous loop tgo was 0.01 or so.
-	IF upfgInternal["tgo"] < finalizeDT { BREAK. }
-	//	Apply the angular momentum criterion as well
-	IF angularMomentumWatchdog() {
-		pushUIMessage("Angular momentum criterion satisfied!", 5, PRIORITY_CRITICAL).
-		BREAK.
+	UNTIL abortState["mode"] = "escape" {
+		contingencyWatchdog().
+		IF abortState["mode"] = "escape" { BREAK. }
+		IF abortState["mode"] = "ato" AND throttleSetting = 0 { BREAK. }
+		LOCAL finalizeDT IS TIME:SECONDS - previousTime.
+		SET previousTime TO TIME:SECONDS.
+		SET upfgInternal["tgo"] TO upfgInternal["tgo"] - finalizeDT.
+		//	Exit the loop before entering the next refresh cycle.
+		//	We can't do "tgo < 0" as then we still didn't break if the previous loop tgo was 0.01 or so.
+		IF upfgInternal["tgo"] < finalizeDT { BREAK. }
+		//	Apply the angular momentum criterion as well
+		IF angularMomentumWatchdog() {
+			pushUIMessage("Angular momentum criterion satisfied!", 5, PRIORITY_CRITICAL).
+			BREAK.
+		}
+		refreshUI().
+		//	Execute hooks if needed
+		callHooks("terminal").
+		WAIT 0.
 	}
-	refreshUI().
-	//	Execute hooks if needed
-	callHooks("terminal").
-	WAIT 0.
+	IF abortState["mode"] = "escape" { executeEscapeGuidance(). }
 }
 
 
@@ -167,7 +194,7 @@ UNLOCK THROTTLE.
 SET SHIP:CONTROL:PILOTMAINTHROTTLE TO 0.
 SET SHIP:CONTROL:NEUTRALIZE TO TRUE.
 WAIT 0.
-missionValidation().
+IF abortState["mode"] <> "escaped" { missionValidation(). }
 refreshUI().
 //	Execute the final hooks
 callHooks("final").

@@ -1,3 +1,5 @@
+@CLOBBERBUILTINS OFF.
+
 //	Addons library
 
 //	This lexicon stores all delegates registered for each of the possible hooks.
@@ -9,6 +11,8 @@ GLOBAL addonHookRegistry IS LEXICON(
 	"activePre", LIST(),	//	active guidance loop, before everything else
 	"activePost", LIST(),	//	active guidance loop, after everything else
 	"terminal", LIST(),		//	active guidance loop, terminal phase
+	"abortEscape", LIST(),	//	escape has been requested, immediately after the action group is fired
+	"abortToOrbit", LIST(),	//	vehicle and target have been reconfigured for abort to orbit
 	"final", LIST()			//	just before exiting the program
 ).
 

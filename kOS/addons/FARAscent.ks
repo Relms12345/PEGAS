@@ -1,3 +1,5 @@
+@CLOBBERBUILTINS OFF.
+
 //  FARAscent.ks -- PEGAS Addon
 //  Aerodynamically-informed atmospheric ascent guidance using kos-ferram (FAR).
 //

@@ -1,3 +1,5 @@
+@CLOBBERBUILTINS OFF.
+
 //	Example mission - do not load this file directly, this is just for reference.
 
 //	Apollo class moon-landing payload and Apollo-11 parking orbit.

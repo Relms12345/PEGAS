@@ -1,3 +1,5 @@
+@CLOBBERBUILTINS OFF.
+
 GLOBAL vehicle IS LIST(
 	LEXICON(
 		//THIRD STAGE WITH RD-0124
@@ -9,6 +11,13 @@ GLOBAL vehicle IS LIST(
 		"staging", LEXICON(
 			"jettison", FALSE,
 			"ignition", FALSE
+		),
+		"atoStaging", LEXICON(
+			"jettison", TRUE,
+			"waitBeforeJettison", 1,
+			"ignition", TRUE,
+			"waitBeforeIgnition", 0,
+			"ullage", "hot"
 		)
 	)
 ).
@@ -19,6 +28,9 @@ GLOBAL controls IS LEXICON(
 	"pitchProgram", LEXICON(
 		"altitude", LIST(200, 20000, 65000),
 		"pitch", LIST(90, 45, 0)
+	),
+	"abort", LEXICON(
+		"escapeSystem", "auto"
 	)
 	//	Read: until altitude 200m fly at 90 degrees, then turn so that at 20km pitch is 45 degrees,
 	//	then continue turning so that at 65km pitch is 0 degrees.
@@ -29,8 +41,8 @@ SET IgnTime TO 2.
 
 GLOBAL sequence IS LIST(
 	LEXICON("time", -IgnTime, "type", "stage", "message", "Ignition!"),
-	LEXICON("time", 0, "type", "stage", "message", "Liftoff!"),
-	LEXICON("time", 70-IgnTime, "type", "stage", "message", "LES tower Ejected!" ), //"massLost", 2162,
+	LEXICON("time", 0, "type", "liftoff", "message", "Liftoff!"),
+	LEXICON("time", 70-IgnTime, "type", "stage", "escapeJettison", TRUE, "message", "LES tower Ejected!" ), //"massLost", 2162,
 	LEXICON("time", 77-IgnTime, "type", "stage", "message", "First Stage is ejecting"),
 	LEXICON("time", 78-IgnTime, "type", "stage", "message", "First Stage is ejected" ),
 	LEXICON("time", 100-IgnTime, "type", "stage", "message", "Fairings Ejected"), //"massLost", 3200,

@@ -1,3 +1,5 @@
+@CLOBBERBUILTINS OFF.
+
 //	Utility library.
 
 //	INTERNAL FUNCTIONS
@@ -525,6 +527,40 @@ FUNCTION setVehicle {
 		//	Calculate max burn time
 		LOCAL combinedEngines IS getThrust(vst["engines"]).
 		vst:ADD("maxT", vst["massFuel"] / combinedEngines[1]).
+		IF vst:HASKEY("atoStaging") AND NOT vst["atoStaging"]:HASKEY("postStageEvent") {
+			vst["atoStaging"]:ADD("postStageEvent", FALSE).
+		}
+		IF vst:HASKEY("atoStaging") {
+			LOCAL atoStaging IS vst["atoStaging"].
+			IF NOT atoStaging:HASKEY("jettison") OR NOT atoStaging:HASKEY("ignition") {
+				PRINT "Vehicle error: atoStaging missing jettison or ignition in stage " + i.
+				SET errorsFound TO TRUE.
+			} ELSE {
+				IF atoStaging["jettison"] AND NOT atoStaging:HASKEY("waitBeforeJettison") {
+					PRINT "Vehicle error: atoStaging waitBeforeJettison missing in stage " + i.
+					SET errorsFound TO TRUE.
+				}
+				IF atoStaging["ignition"] {
+					IF NOT atoStaging:HASKEY("waitBeforeIgnition") OR NOT atoStaging:HASKEY("ullage") {
+						PRINT "Vehicle error: atoStaging ignition fields missing in stage " + i.
+						SET errorsFound TO TRUE.
+					} ELSE IF LIST("none", "srb", "rcs", "hot"):FIND(atoStaging["ullage"]) < 0 {
+						PRINT "Vehicle error: unknown atoStaging ullage mode in stage " + i.
+						SET errorsFound TO TRUE.
+					} ELSE IF LIST("none", "hot"):FIND(atoStaging["ullage"]) < 0 AND NOT atoStaging:HASKEY("ullageBurnDuration") {
+						PRINT "Vehicle error: atoStaging ullageBurnDuration missing in stage " + i.
+						SET errorsFound TO TRUE.
+					} ELSE IF atoStaging["ullage"] = "rcs" AND NOT atoStaging:HASKEY("postUllageBurn") {
+						PRINT "Vehicle error: atoStaging postUllageBurn missing in stage " + i.
+						SET errorsFound TO TRUE.
+					}
+				}
+				IF atoStaging["postStageEvent"] AND NOT atoStaging:HASKEY("waitBeforePostStage") {
+					PRINT "Vehicle error: atoStaging waitBeforePostStage missing in stage " + i.
+					SET errorsFound TO TRUE.
+				}
+			}
+		}
 		//	Internal flags
 		vst:ADD("followedByVirtual", FALSE).
 		vst:ADD("isVirtualStage", FALSE).
@@ -656,6 +692,7 @@ FUNCTION init4upfg_jettison {
 		"virtual (post-jettison)" IF afterStage["mode"] = 1
 		ELSE "virtual (post-jet. const)".
 	vehicle:INSERT(stageID + 1, afterStage).
+	SET event["_virtualStage"] TO stageID + 1.
 	//	Finally, update the original stage
 	SET vehicle[stageID]["massFuel"] TO fuelBurnedUntil.
 	SET vehicle[stageID]["massDry"] TO vehicle[stageID]["massTotal"] - vehicle[stageID]["massFuel"].
@@ -717,6 +754,7 @@ FUNCTION init4upfg_shutdown {
 		"virtual (post-shutdown)" IF afterStage["mode"] = 1
 		ELSE "virtual (post-shut const)".
 	vehicle:INSERT(stageID + 1, afterStage).
+	SET event["_virtualStage"] TO stageID + 1.
 	//	Finally, update the original stage
 	SET vehicle[stageID]["massFuel"] TO fuelBurnedUntil.
 	SET vehicle[stageID]["massDry"] TO vehicle[stageID]["massTotal"] - vehicle[stageID]["massFuel"].
@@ -950,6 +988,11 @@ FUNCTION upfgSteeringControl {
 		SET usc_lastSeenStage TO upfgStage.
 	}
 	LOCAL upfgOutput IS upfg(usc_currentVehicle, upfgTarget, upfgState, upfgInternal).
+	IF NOT (DEFINED upfgBurnFeasible) {
+		GLOBAL upfgBurnFeasible IS upfgOutput[1]["feasible"].
+	} ELSE {
+		SET upfgBurnFeasible TO upfgOutput[1]["feasible"].
+	}
 
 	//	Convergence check. The rule is that time-to-go as calculated between iterations
 	//	should not change significantly more than the time difference between those iterations.
@@ -1048,16 +1091,6 @@ FUNCTION throttleControl {
 	}
 }
 
-//	Return all currently activated engines as a list.
-FUNCTION getActiveEngines {
-	LOCAL activeEngines IS LIST().
-	LIST ENGINES IN allEngines.
-	FOR engine IN allEngines {
-		IF engine:AVAILABLETHRUST > 0 { activeEngines:ADD(engine). }
-	}
-	RETURN activeEngines.
-}
-
 //	Conditions for transition into terminal hold mode
 FUNCTION terminalHoldConditions {
 	//	This encapsulates the logic behind transitioning into terminal guidance mode.
@@ -1068,62 +1101,6 @@ FUNCTION terminalHoldConditions {
 		NOT stagingInProgress AND
 		upfgConverged AND
 		upfgInternal["tgo"] < SETTINGS["upfgFinalizationTime"].
-}
-
-//	Loss of thrust detection system
-FUNCTION thrustWatchdog {
-	//	Called regularly, will perform a check whether the engines that are supposed to be burning, are in fact
-	//	burning. "Supposed to" means that the check will not be performed prior to liftoff nor during staging
-	//	(and shortly after staging, to avoid false loss-of-thrust detection when the engines are merely just
-	//	spooling up to full thrust). In case of loss of thrust, mission abort is triggered.
-	//	To reduce call overhead, list of active engines is prepared and cached whenever a staging event occurs.
-	//	Note: do NOT call this in terminal phase of the flight (i.e. during attitude hold and countdown to Tgo).
-	//	Watchdog can be disabled by having "disableThrustWatchdog" set to TRUE in "controls".
-	//	Expects global variables:
-	//	"controls" as lexicon
-	//	"liftOffTime" as timespan
-	//	"upfgStage" as integer
-	//	"vehicle" as list
-	//	Owns global variables: "twb_activeEngines", "twb_waitAfterStaging", "twb_timeOfStaging".
-
-	//	Exit if the watchdog is disabled by the user
-	IF controls:HASKEY("disableThrustWatchdog") AND controls["disableThrustWatchdog"] { RETURN. }
-
-	//	Disabled when we're waiting on the launchpad
-	IF TIME:SECONDS < liftoffTime:SECONDS { RETURN. }
-
-	//	First real run (cannot happen any earlier because we need to catch the active engines)
-	IF NOT (DEFINED twb_activeEngines) {
-		GLOBAL twb_activeEngines IS getActiveEngines().
-		GLOBAL twb_waitAfterStaging IS FALSE.
-		GLOBAL twb_timeOfStaging IS 0.
-	}
-
-	//	Don't check if we're between stages and it's okay to not have thrust
-	IF stagingInProgress AND (NOT vehicle[upfgStage]["isVirtualStage"]) AND (NOT vehicle[upfgStage]["isSustainer"]) {
-		SET twb_waitAfterStaging TO TRUE.
-		SET twb_timeOfStaging TO TIME:SECONDS.
-		RETURN.
-	}
-
-	//	If we just exited from staging, wait a second or two to let the engines spool up *and then* cache them
-	IF twb_waitAfterStaging {
-		IF TIME:SECONDS < twb_timeOfStaging + 2 { RETURN. }
-		SET twb_waitAfterStaging TO FALSE.
-		SET twb_activeEngines TO getActiveEngines().
-	}
-
-	//	Check if we've got thrust
-	LOCAL sumThrust IS 0.
-	FOR engine IN twb_activeEngines {
-		SET sumThrust TO sumThrust + engine:THRUST.
-	}
-
-	//	We're comparing floats so better to use an epsilon... nobody will be flying an ion engine, right?
-	IF sumThrust < 0.001 {
-		pushUIMessage("LOSS OF THRUST DETECTED. ABORTING!", 10, PRIORITY_CRITICAL).
-		TOGGLE ABORT.
-	}
 }
 
 //	Secondary MECO criterion
@@ -1140,12 +1117,21 @@ FUNCTION angularMomentumWatchdog {
 	//	Returns TRUE if we should MECO, i.e. orbital angular momentum target is achieved, FALSE otherwise.
 
 	//	First run: set up the angular momentum target value
-	IF NOT (DEFINED amwd_target) {
+	IF NOT (DEFINED amwd_target) OR NOT (DEFINED amwd_targetApoapsis) OR
+		amwd_targetApoapsis <> mission["apoapsis"] OR amwd_targetPeriapsis <> mission["periapsis"] {
 		LOCAL _target_ap IS SHIP:ORBIT:BODY:RADIUS + 1000 * mission["apoapsis"].
 		LOCAL _target_pe IS SHIP:ORBIT:BODY:RADIUS + 1000 * mission["periapsis"].
 		LOCAL _target_sma IS (_target_ap + _target_pe) / 2.
 		LOCAL _target_ecc IS (_target_ap - _target_pe) / (_target_ap + _target_pe).
-		GLOBAL amwd_target IS SQRT(_target_sma * (1 - _target_ecc ^ 2)).
+		IF NOT (DEFINED amwd_target) {
+			GLOBAL amwd_target IS SQRT(_target_sma * (1 - _target_ecc ^ 2)).
+			GLOBAL amwd_targetApoapsis IS mission["apoapsis"].
+			GLOBAL amwd_targetPeriapsis IS mission["periapsis"].
+		} ELSE {
+			SET amwd_target TO SQRT(_target_sma * (1 - _target_ecc ^ 2)).
+			SET amwd_targetApoapsis TO mission["apoapsis"].
+			SET amwd_targetPeriapsis TO mission["periapsis"].
+		}
 		RETURN FALSE.
 	}
 

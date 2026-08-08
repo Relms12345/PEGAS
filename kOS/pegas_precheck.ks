@@ -1,3 +1,5 @@
+@CLOBBERBUILTINS OFF.
+
 //  Pre-flight checks for critical configuration variables
 SET missingConfigVars TO LIST().
 IF NOT (DEFINED vehicle) {

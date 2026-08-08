@@ -1,3 +1,5 @@
+@CLOBBERBUILTINS OFF.
+
 GLOBAL vehicle IS LIST(
 					LEXICON(
 						//	This stage will be ignited upon UPFG activation.
@@ -31,13 +33,16 @@ GLOBAL vehicle IS LIST(
 ).
 GLOBAL sequence IS LIST(
 					LEXICON("time", -6.5, "type", "stage", "message", "F-1 ignition"),
-					LEXICON("time", 0, "type", "stage", "message", "LIFTOFF")
+					LEXICON("time", 0, "type", "liftoff", "message", "LIFTOFF")
 ).
 GLOBAL controls IS LEXICON(
 					"launchTimeAdvance", 120,
 					"verticalAscentTime", 25,
 					"pitchOverAngle", 3,
-					"upfgActivation", 163
+					"upfgActivation", 163,
+					"abort", LEXICON(
+						"escapeSystem", "auto"
+					)
 ).
 SET STEERINGMANAGER:ROLLTS TO 10.
 SWITCH TO 0.

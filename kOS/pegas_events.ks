@@ -1,3 +1,5 @@
+@CLOBBERBUILTINS OFF.
+
 //	Event handling library.
 
 //	Utility to insert an event into the sequence by time order
@@ -17,6 +19,68 @@ FUNCTION insertEvent {
 	}
 	//	...and insert there.
 	sequence:INSERT(index, event).
+}
+
+// Rebuild automatic staging events after the current vehicle model changes.
+FUNCTION rescheduleStagingEvents {
+	DECLARE PARAMETER currentStage.
+	DECLARE PARAMETER remainingBurn.
+	DECLARE PARAMETER cancelThroughStage IS -1.
+	LOCAL oldSequence IS sequence:COPY().
+	LOCAL stageActivationTime IS TIME:SECONDS - liftoffTime:SECONDS + remainingBurn.
+	FROM { LOCAL i IS currentStage + 1. } UNTIL i >= vehicle:LENGTH STEP { SET i TO i + 1. } DO {
+		FOR event IN oldSequence {
+			IF event:HASKEY("_virtualStage") AND event["_virtualStage"] = i {
+				SET event["time"] TO stageActivationTime.
+			}
+		}
+		SET stageActivationTime TO stageActivationTime + getStageDelays(vehicle[i]) + vehicle[i]["maxT"].
+	}
+
+	LOCAL updatedSequence IS LIST().
+	FROM { LOCAL i IS 0. } UNTIL i <= eventPointer STEP { SET i TO i + 1. } DO {
+		updatedSequence:ADD(oldSequence[i]).
+	}
+	LOCAL futureEvents IS LIST().
+	FROM { LOCAL i IS eventPointer + 1. } UNTIL i >= oldSequence:LENGTH STEP { SET i TO i + 1. } DO {
+		LOCAL event IS oldSequence[i].
+		LOCAL automaticStageEvent IS event["type"] = "_prestage" OR event["type"] = "_upfgstage" OR
+			(cancelThroughStage >= 0 AND event["type"] = "_activeon").
+		LOCAL skippedVehicleEvent IS event:HASKEY("_virtualStage") AND event["_virtualStage"] <= cancelThroughStage.
+		LOCAL staleStageCommand IS cancelThroughStage >= 0 AND (event["type"] = "stage" OR event["type"] = "s").
+		IF NOT automaticStageEvent AND NOT skippedVehicleEvent AND NOT staleStageCommand {
+			futureEvents:ADD(event).
+		}
+	}
+	SET sequence TO updatedSequence.
+	FOR event IN futureEvents { insertEvent(event). }
+
+	SET stageActivationTime TO TIME:SECONDS - liftoffTime:SECONDS + remainingBurn.
+	FROM { LOCAL i IS currentStage + 1. } UNTIL i >= vehicle:LENGTH STEP { SET i TO i + 1. } DO {
+		LOCAL stagingTransitionTime IS SETTINGS["stagingKillRotTime"].
+		IF vehicle[i]["isVirtualStage"] { SET stagingTransitionTime TO 2. }
+		insertEvent(LEXICON(
+			"time", stageActivationTime - stagingTransitionTime,
+			"type", "_prestage",
+			"stageIndex", i,
+			"isHidden", TRUE
+		)).
+		LOCAL stageEvent IS LEXICON(
+			"time", stageActivationTime,
+			"type", "_upfgstage",
+			"stageIndex", i,
+			"isHidden", vehicle[i]["isVirtualStage"],
+			"fpMessage", "STAGE: " + vehicle[i]["name"]
+		).
+		IF vehicle[i]["virtualStageType"] = "virtual (const-acc)" {
+			SET stageEvent["isHidden"] TO FALSE.
+			SET stageEvent["fpMessage"] TO "Constant acceleration mode".
+		}
+		insertEvent(stageEvent).
+		SET stageActivationTime TO stageActivationTime + getStageDelays(vehicle[i]) + vehicle[i]["maxT"].
+	}
+	IF DEFINED thisStageEndTime { SET thisStageEndTime TO TIME:SECONDS + remainingBurn. }
+	buildFlightPlan(FALSE).
 }
 
 //	Create countdown print events
@@ -77,6 +141,7 @@ FUNCTION spawnStagingEvents {
 	LOCAL stagingEvent IS LEXICON(
 		"time", stageActivationTime,
 		"type", "_upfgstage",
+		"stageIndex", 0,
 		"isHidden", vehicleIterator:VALUE["isVirtualStage"] OR vehicleIterator:VALUE["isSustainer"],
 		"fpMessage", "STAGE: " + vehicleIterator:VALUE["name"]
 	).
@@ -93,6 +158,7 @@ FUNCTION spawnStagingEvents {
 	//	with some delay after the activation, and burns for maxT seconds.
 	SET stageActivationTime TO stageActivationTime + getStageDelays(vehicleIterator:VALUE) + vehicleIterator:VALUE["maxT"].
 	//	Loop over remaining stages
+	LOCAL stageIndex IS 1.
 	UNTIL NOT vehicleIterator:NEXT {
 		//	Construct & insert pre-stage event
 		LOCAL stagingTransitionTime IS SETTINGS["stagingKillRotTime"].
@@ -100,6 +166,7 @@ FUNCTION spawnStagingEvents {
 		LOCAL stagingEvent IS LEXICON(
 			"time", stageActivationTime - stagingTransitionTime,
 			"type", "_prestage",
+			"stageIndex", stageIndex,
 			"isHidden", TRUE
 		).
 		insertEvent(stagingEvent).
@@ -107,6 +174,7 @@ FUNCTION spawnStagingEvents {
 		LOCAL stagingEvent IS LEXICON(
 			"time", stageActivationTime,
 			"type", "_upfgstage",
+			"stageIndex", stageIndex,
 			"isHidden", vehicleIterator:VALUE["isVirtualStage"],
 			"fpMessage", "STAGE: " + vehicleIterator:VALUE["name"]
 		).
@@ -118,6 +186,7 @@ FUNCTION spawnStagingEvents {
 		insertEvent(stagingEvent).
 		//	Compute activation time for the next stage (in the same way as before)
 		SET stageActivationTime TO stageActivationTime + getStageDelays(vehicleIterator:VALUE) + vehicleIterator:VALUE["maxT"].
+		SET stageIndex TO stageIndex + 1.
 	}
 }
 
@@ -150,12 +219,23 @@ FUNCTION eventHandler {
 	//	If we got this far, means it's time to handle the event
 	LOCAL event IS sequence[nextEventPointer].
 	LOCAL eType IS event["type"].
+	IF event:HASKEY("structureChange") AND event["structureChange"] {
+		authorizeStructureChange().
+		scheduleEngineBaselineRecache().
+	}
 	IF      eType = "print" OR eType = "p" { }
 	ELSE IF eType = "stage" OR eType = "s" {
+		authorizeStructureChange().
 		STAGE.
+		scheduleEngineBaselineRecache().
 	}
 	ELSE IF eType = "jettison" OR eType = "j" {
+		authorizeStructureChange().
 		STAGE.
+		scheduleEngineBaselineRecache().
+	}
+	ELSE IF eType = "liftoff" OR eType = "l" {
+		IF NOT userEvent_liftoff(event) { RETURN. }
 	}
 	ELSE IF eType = "throttle" OR eType = "t" {
 		userEvent_throttle(event).
@@ -176,13 +256,16 @@ FUNCTION eventHandler {
 		internalEvent_activeModeOn().
 	}
 	ELSE IF eType = "_prestage" {
-		internalEvent_preStage().
+		internalEvent_preStage(event).
 	}
 	ELSE IF eType = "_upfgstage" {
 		internalEvent_staging().
 	}
 	ELSE {
 		pushUIMessage("Unknown event type (" + eType + ", message='" + event["message"] + "')!", 5, PRIORITY_HIGH).
+	}
+	IF event:HASKEY("escapeJettison") AND event["escapeJettison"] {
+		markEscapeUnavailable().
 	}
 
 	//	Print event message, if requested
@@ -201,6 +284,28 @@ FUNCTION eventHandler {
 
 //	EVENT HANDLING SUBROUTINES
 
+// Hold the clamps until the engines establish the configured live TWR.
+FUNCTION userEvent_liftoff {
+	DECLARE PARAMETER event.
+	IF NOT abort_liftoffGateStarted {
+		SET abort_liftoffGateStarted TO TRUE.
+		SET abort_liftoffGateDeadline TO TIME:SECONDS + abortConfig["launchTimeout"].
+	}
+	IF localTWR() >= abortConfig["minLaunchTWR"] {
+		IF abortEnabled { cacheEngineBaseline(). }
+		authorizeStructureChange().
+		STAGE.
+		// Subsequent sequence entries and guidance state use actual clamp-release time as T0.
+		SET liftoffTime TO TIME.
+		RETURN TRUE.
+	}
+	IF TIME:SECONDS >= abort_liftoffGateDeadline {
+		requestPadShutdown().
+		RETURN FALSE.
+	}
+	RETURN FALSE.
+}
+
 //	Handle transition to active guidance mode
 FUNCTION internalEvent_activeModeOn {
 	SET activeGuidanceMode TO TRUE.
@@ -209,12 +314,13 @@ FUNCTION internalEvent_activeModeOn {
 
 //	Handle the pre-staging event
 FUNCTION internalEvent_preStage {
+	DECLARE PARAMETER event.
 	//	Switch to staging mode, increment the stage counter and force UPFG reconvergence.
 	//	Rationale is not changed: we want to maintain constant attitude while the current stage is still burning,
 	//	but at the same time start converging guidance for the subsequent stage.
 	SET stagingInProgress TO TRUE.
 	SET prestageHold TO TRUE.
-	SET upfgStage TO upfgStage + 1.
+	SET upfgStage TO CHOOSE event["stageIndex"] IF event:HASKEY("stageIndex") ELSE upfgStage + 1.
 	SET upfgConverged TO FALSE.
 	usc_convergeFlags:CLEAR().
 }
@@ -230,8 +336,13 @@ FUNCTION internalEvent_staging {
 	//	Gather all necessary information
 	LOCAL currentTime IS TIME:SECONDS.
 	LOCAL event IS vehicle[upfgStage]["staging"].
+	IF abortState["mode"] = "ato" AND abortState["emergencyStage"] = upfgStage AND
+		vehicle[upfgStage]:HASKEY("atoStaging") {
+		SET event TO vehicle[upfgStage]["atoStaging"].
+	}
 	LOCAL stageName IS vehicle[upfgStage]["name"].
 	LOCAL eventDelay IS 0.	//	Keep track of time between subsequent events.
+	LOCAL eventGeneration IS abort_stagingGeneration.
 	//	If this stage needs a postStageEvent, set the hold flag immediately
 	IF event["postStageEvent"] {
 		SET poststageHold TO TRUE.
@@ -250,8 +361,11 @@ FUNCTION internalEvent_staging {
 	IF event["jettison"] AND NOT isHotStage {
 		LOCAL stageJettisonTime IS currentTime + event["waitBeforeJettison"].
 		WHEN TIME:SECONDS >= stageJettisonTime THEN {
-			STAGE.
-			pushUIMessage(stageName + " - separation").
+			IF eventGeneration = abort_stagingGeneration AND abortState["mode"] <> "escape" {
+				authorizeStructureChange().
+				STAGE.
+				pushUIMessage(stageName + " - separation").
+			}
 		}
 		SET eventDelay TO eventDelay + event["waitBeforeJettison"].
 	}
@@ -260,32 +374,43 @@ FUNCTION internalEvent_staging {
 		IF event["ullage"] = "rcs" {
 			LOCAL ullageIgnitionTime IS currentTime + eventDelay + event["waitBeforeIgnition"].
 			WHEN TIME:SECONDS >= ullageIgnitionTime THEN {
-				RCS ON.
-				SET SHIP:CONTROL:FORE TO 1.0.
-				pushUIMessage(stageName + " - RCS ullage on").
+				IF eventGeneration = abort_stagingGeneration AND abortState["mode"] <> "escape" {
+					RCS ON.
+					SET SHIP:CONTROL:FORE TO 1.0.
+					pushUIMessage(stageName + " - RCS ullage on").
+				}
 			}
 			SET eventDelay TO eventDelay + event["waitBeforeIgnition"].
 			LOCAL engineIgnitionTime IS currentTime + eventDelay + event["ullageBurnDuration"].
 			WHEN TIME:SECONDS >= engineIgnitionTime THEN {
-				internalEvent_staging_activation().
+				IF eventGeneration = abort_stagingGeneration AND abortState["mode"] <> "escape" {
+					internalEvent_staging_activation().
+				}
 			}
 			SET eventDelay TO eventDelay + event["ullageBurnDuration"].
 			LOCAL ullageShutdownTime IS currentTime + eventDelay + event["postUllageBurn"].
 			WHEN TIME:SECONDS >= ullageShutdownTime THEN {
-				SET SHIP:CONTROL:FORE TO 0.0.
-				RCS OFF.
-				pushUIMessage(stageName + " - RCS ullage off").
+				IF eventGeneration = abort_stagingGeneration AND abortState["mode"] <> "escape" {
+					SET SHIP:CONTROL:FORE TO 0.0.
+					RCS OFF.
+					pushUIMessage(stageName + " - RCS ullage off").
+				}
 			}
 		} ELSE IF event["ullage"] = "srb" {
 			LOCAL ullageIgnitionTime IS currentTime + eventDelay + event["waitBeforeIgnition"].
 			WHEN TIME:SECONDS >= ullageIgnitionTime THEN {
-				STAGE.
-				pushUIMessage(stageName + " - SRB ullage ignited").
+				IF eventGeneration = abort_stagingGeneration AND abortState["mode"] <> "escape" {
+					authorizeStructureChange().
+					STAGE.
+					pushUIMessage(stageName + " - SRB ullage ignited").
+				}
 			}
 			SET eventDelay TO eventDelay + event["waitBeforeIgnition"].
 			LOCAL engineIgnitionTime IS currentTime + eventDelay + event["ullageBurnDuration"].
 			WHEN TIME:SECONDS >= engineIgnitionTime THEN {
-				internalEvent_staging_activation().
+				IF eventGeneration = abort_stagingGeneration AND abortState["mode"] <> "escape" {
+					internalEvent_staging_activation().
+				}
 			}
 			SET eventDelay TO eventDelay + event["ullageBurnDuration"].
 		} ELSE IF event["ullage"] = "hot" {
@@ -293,14 +418,18 @@ FUNCTION internalEvent_staging {
 			//	to maintain attitude until the delayed jettison.
 			LOCAL engineIgnitionTime IS currentTime + eventDelay + event["waitBeforeIgnition"].
 			WHEN TIME:SECONDS >= engineIgnitionTime THEN {
-				SET poststageHold TO TRUE.
-				internalEvent_staging_activation().
+				IF eventGeneration = abort_stagingGeneration AND abortState["mode"] <> "escape" {
+					SET poststageHold TO TRUE.
+					internalEvent_staging_activation().
+				}
 			}
 			SET eventDelay TO eventDelay + event["waitBeforeIgnition"].
 		} ELSE IF event["ullage"] = "none" {
 			LOCAL engineIgnitionTime IS currentTime + eventDelay + event["waitBeforeIgnition"].
 			WHEN TIME:SECONDS >= engineIgnitionTime THEN {
-				internalEvent_staging_activation().
+				IF eventGeneration = abort_stagingGeneration AND abortState["mode"] <> "escape" {
+					internalEvent_staging_activation().
+				}
 			}
 			SET eventDelay TO eventDelay + event["waitBeforeIgnition"].
 		} ELSE {
@@ -315,9 +444,12 @@ FUNCTION internalEvent_staging {
 	IF event["jettison"] AND isHotStage {
 		LOCAL stageJettisonTime IS currentTime + eventDelay + event["waitBeforeJettison"].
 		WHEN TIME:SECONDS >= stageJettisonTime THEN {
-			STAGE.
-			SET poststageHold TO FALSE.
-			pushUIMessage(stageName + " - separation").
+			IF eventGeneration = abort_stagingGeneration AND abortState["mode"] <> "escape" {
+				authorizeStructureChange().
+				STAGE.
+				SET poststageHold TO FALSE.
+				pushUIMessage(stageName + " - separation").
+			}
 		}
 		SET eventDelay TO eventDelay + event["waitBeforeJettison"].
 	}
@@ -326,18 +458,23 @@ FUNCTION internalEvent_staging {
 		LOCAL hasExtraHold IS event:HASKEY("waitAfterPostStage").
 		LOCAL postStagingEventTime IS currentTime + eventDelay + event["waitBeforePostStage"].
 		WHEN TIME:SECONDS >= postStagingEventTime THEN {
-			STAGE.
-			IF NOT hasExtraHold {
-				SET poststageHold TO FALSE.
+			IF eventGeneration = abort_stagingGeneration AND abortState["mode"] <> "escape" {
+				authorizeStructureChange().
+				STAGE.
+				IF NOT hasExtraHold {
+					SET poststageHold TO FALSE.
+				}
+				pushUIMessage(stageName + " - post-jettison").
 			}
-			pushUIMessage(stageName + " - post-jettison").
 		}
 		SET eventDelay TO eventDelay + event["waitBeforePostStage"].
 		//	If after the separation we need to wait some extra time before releasing the attitude hold
 		IF hasExtraHold {
 			LOCAL postStagingEventTime IS currentTime + eventDelay + event["waitAfterPostStage"].
 			WHEN TIME:SECONDS >= postStagingEventTime THEN {
-				SET poststageHold TO FALSE.
+				IF eventGeneration = abort_stagingGeneration AND abortState["mode"] <> "escape" {
+					SET poststageHold TO FALSE.
+				}
 			}
 			SET eventDelay TO eventDelay + event["waitAfterPostStage"].
 		}
@@ -371,6 +508,7 @@ FUNCTION internalEvent_staging_activation {
 	SET throttleDisplay TO desiredThrottle.
 	//	Ignite if necessary
 	IF needsIgnite {
+		authorizeStructureChange().
 		STAGE.
 	}
 	//	If the engine requires a spool-up, wait the given time before disabling stagingInProgress
@@ -379,6 +517,10 @@ FUNCTION internalEvent_staging_activation {
 	WHEN TIME:SECONDS >= engineSpooledUpTime THEN {
 		updateThisStageEndTime().
 		SET stagingInProgress TO FALSE.
+		IF abortEnabled {
+			SET abort_engineExpectedBy TO TIME:SECONDS + abortConfig["engineFailureDelay"].
+			scheduleEngineBaselineRecache(0).
+		}
 	}
 	//	Print message if requested
 	IF printMessage {
@@ -420,6 +562,7 @@ FUNCTION userEvent_shutdown {
 	FOR engine IN taggedEngines {
 		engine:SHUTDOWN().
 	}
+	scheduleEngineBaselineRecache().
 	IF NOT event:HASKEY("message") {
 		event:ADD("message", "Shutting down engine(s): '" + event["engineTag"] + "'.").
 	}

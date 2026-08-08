@@ -1,3 +1,5 @@
+@CLOBBERBUILTINS OFF.
+
 GLOBAL vehicle IS LIST(
 					LEXICON(
 						//	This is a sustainer-type stage. It ignites on the pad, but UPFG takes control over it mid-flight.
@@ -33,7 +35,7 @@ GLOBAL vehicle IS LIST(
 ).
 GLOBAL sequence IS LIST(
 					LEXICON("time", -3.7, "type", "stage", "message", "RD-180 ignition"),
-					LEXICON("time", 0, "type", "stage", "message", "LIFTOFF"),
+					LEXICON("time", 0, "type", "liftoff", "message", "LIFTOFF"),
 					LEXICON("time", 100, "type", "stage", "message", "SRB jettison"),
 					LEXICON("time", 105, "type", "roll", "angle", 90),
 					LEXICON("time", 210, "type", "jettison", "message", "PLF jettison", "massLost", 4400),
@@ -44,8 +46,11 @@ GLOBAL controls IS LEXICON(
 					"launchTimeAdvance", 150,
 					"verticalAscentTime", 7,	//	7 seconds work well for 5t payload, 8 good for 15t
 					"pitchOverAngle", 10,
-					"upfgActivation", 115
-).
+					"upfgActivation", 115,
+					"abort", LEXICON(
+						"escapeSystem", "none"
+					)
+					).
 SET STEERINGMANAGER:ROLLTS TO 10.
 SWITCH TO 0.
 CLEARSCREEN.

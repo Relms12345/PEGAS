@@ -47,6 +47,13 @@ paricularly `addonHookRegistry`.
 To see the exact hook points, check the [main module](../kOS/pegas.ks),
 look for lines containing `callHooks()`.
 
+Contingency handling provides two additional hooks:
+* `abortEscape`: called immediately after escape or ballistic fallback is selected and the ABORT action group is activated;
+* `abortToOrbit`: called after the target and degraded vehicle model have been configured for ATO.
+
+Neither hook runs when contingency handling is disabled. A pad TWR timeout performs a non-ABORT shutdown and therefore
+does not call `abortEscape`.
+
 Your custom function can be anything, as long as it expects **no arguments**.
 You can return values, but they will be ignored.
 Of course, you're free to use and modify all PEGAS' global variables.

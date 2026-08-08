@@ -24,6 +24,7 @@ pitchProgram       | `lexicon` | optional\* | Vehicle will follow a pitch progra
 upfgActivation     | s     | required | The active guidance phase will be activated that many seconds after liftoff
 initialRoll        | deg   | optional | Angle to which the vehicle will roll during the initial pitchover maneuver (default is 0)
 disableThrustWatchdog | `boolean` | optional | Set to `TRUE` in order to disable loss-of-thrust checking on this vehicle, ignore this key otherwise.
+abort              | `lexicon` | optional | Failure detection, escape guidance, RUD detection, abort-to-orbit, and liftoff-gate configuration. Omitting it disables contingency monitoring but retains the default live-TWR liftoff gate.
 
 \* - of those three fields, you have to provide **EITHER** `verticalAscentTime` and `pitchOverAngle`
 **OR** `pitchProgram`.
@@ -63,6 +64,62 @@ Key         | Units | Opt/req   | Meaning
 `altitude`  | m     | required  | Keypoint altitudes
 `pitch`     | deg   | required  | Desired pitch angle to reach at the corresponding altitude
 
+#### Abort and escape configuration
+
+The optional `controls["abort"]` lexicon enables and configures contingency handling. Omitting the lexicon disables
+engine-failure, ATO, RUD, spin, manual-abort, escape, and LES monitoring. The live-TWR liftoff gate remains active with its
+defaults because clamp-release safety is independent of contingency monitoring. All fields within the lexicon are optional.
+
+Key | Units/type | Default | Meaning
+--- | --- | --- | ---
+enabled | boolean | `TRUE` | Enable contingency monitoring when the `abort` lexicon exists. Set to `FALSE` to retain configured liftoff-gate values while disabling the abort system.
+minLaunchTWR | scalar | `1.2` | Live local TWR required by a `liftoff` event before launch clamps are released. Modular Launch Pads parts are excluded from vehicle mass.
+launchTimeout | s | `2` | Maximum hold after scheduled liftoff while waiting for the required TWR. Timeout commands idle throttle, leaves clamps attached, and terminates PEGAS without firing `ABORT`.
+engineHealthThreshold | fraction | `0.95` | Minimum ratio of current to cached vacuum available thrust before an engine malfunction is declared.
+engineFailureDelay | s | `0.5` | Time that an engine-health violation must persist.
+thrustLossDetectThrottle | fraction | `0.05` | Minimum commanded throttle at which engine-health and thrust-loss monitoring is active.
+escapeSystem | string | `"auto"` | `"crew"`, `"payload"`, `"auto"`, or `"none"`. Auto selects crew escape only when crew is aboard; payload escape must be explicit.
+lesPartTag | string | `""` | Optional tag identifying LES hardware. If a matching part is attached at initialization and later disappears, PEGAS records that the LES was jettisoned. Empty or unmatched tags are ignored.
+escapeGuidanceTime | s | `5` | Time PEGAS tracks surface prograde during the LES escape burn before turning surface-retrograde.
+escapeMinProgradeSpeed | m/s | `10` | Minimum speed for updating the flight-path direction. Below it PEGAS preserves the last valid guidance attitude.
+rudEnabled | boolean | `TRUE` | Enable corroborated rapid-unscheduled-disassembly detection.
+rudMinLostParts | integer | `2` | Missing parts sufficient to corroborate a structural failure.
+rudMinDryMassFraction | fraction | `0.01` | Missing dry-mass fraction sufficient to corroborate a structural failure.
+rudMaxAngularRate | deg/s | `15` | Angular rate which corroborates unexpected part loss.
+criticalPartTag | string | `""` | Optional part tag whose unexpected loss immediately corroborates RUD.
+spinEnabled | boolean | `TRUE` | Enable standalone excessive-rotation detection after liftoff.
+spinMaxAngularRate | deg/s | `30` | Total vessel angular rate considered an uncontrolled spin.
+spinFailureDelay | s | `1` | Time the angular-rate violation must persist before escape is requested.
+atoEnabled | boolean | `TRUE` | Permit abort to orbit after partial or complete engine malfunction during passive or active ascent.
+atoReserve | m/s | `250` | Delta-v reserve used by the initial ATO feasibility check.
+orbitMargin | km | `10` | Safe periapsis margin above the body's advertised atmosphere height.
+atoInfeasibleDelay | s | `1` | Time that UPFG feasibility or the configured delta-v reserve must remain violated before ATO stages early or falls back to escape.
+passiveAtoStage | integer | `-1` | Physical `vehicle` stage to activate after a passive-ascent failure. `-1` selects stage 0 when `staging` or `atoStaging` can ignite it, otherwise stage 1 for a sustainer-style first guided stage.
+atoPreserveMissionPlane | boolean | `FALSE` | Keep targeting the original inclination and LAN during ATO. By default PEGAS preserves the current orbital plane to avoid an unnecessary emergency plane correction.
+
+The standard KSP `ABORT` action group must perform all vehicle-specific escape motor and separation actions.
+The kOS CPU must remain on the capsule or payload side, with independent power and steering authority.
+RUD always selects escape rather than ATO because the logical vehicle model cannot be trusted after structural breakup.
+Confirmed spins also select immediate escape rather than ATO. Spin detection is suppressed before liftoff, while grounded,
+during commanded roll transitions, and during the intentional-structure-change grace period. A post-separation tumble that
+persists beyond that grace period remains detectable.
+If an engine-failure ATO is unavailable or becomes infeasible after a tracked LES has been jettisoned,
+PEGAS fires `ABORT` and immediately points the surviving vehicle surface-retrograde.
+This ballistic fallback is not used for manual aborts, RUD, or spins.
+PEGAS enables RCS whenever an abort is requested and leaves it enabled after releasing control, overriding any RCS
+state selected by the `ABORT` action group so the protected vehicle retains attitude authority.
+For an available LES, PEGAS tracks surface prograde during the configured escape burn, then turns surface-retrograde
+and holds that attitude until landing or splashdown so the vehicle remains correctly oriented for parachutes.
+PEGAS does not deploy parachutes itself.
+
+ATO evaluates the complete remaining vehicle, including configured upper stages and virtual stages. If the degraded
+current stage cannot provide usable thrust or sufficient performance, PEGAS can immediately run the next physical
+stage's separation, ullage, ignition, and spool-up sequence. The same recovery is available during passive ascent.
+For passive vehicles whose emergency upper-stage activation differs from normal staging, set `passiveAtoStage` and
+provide that stage with an `atoStaging` override as described under [`vehicle`](#vehicle).
+Emergency staging removes future raw `stage` sequence commands because the KSP staging stack has advanced; modeled
+`jettison` and `shutdown` events remain synchronized through their corresponding virtual stages.
+
 ### Vehicle
 `GLOBAL vehicle IS LIST().`
 
@@ -84,6 +141,7 @@ spoolup          | s          | optional  | How long does it take for this stage
 residuals        | %          | optional  | Predicted amount of fuel residuals on this stage (e.g. if GUI says 1.13% put `1.13` here; default = 0.0)
 engines          | `list`     | required  | Parameters of each engine in the stage (details further)
 staging          | `lexicon`  | required  | Description of method of activation of this stage (details further)
+atoStaging       | `lexicon`  | optional  | Emergency activation sequence used when ATO starts this stage early; follows the same schema as `staging`
 mode             | `int`      | reserved  | (Reserved for internal usage)
 maxT             | s          | reserved  | (Reserved for internal usage)
 isSustainer      | `boolean`  | reserved  | (Reserved for internal usage)
@@ -155,6 +213,10 @@ Finally if `postStageEvent` is `TRUE`, some more time is waited (`waitBeforePost
 `STAGE` occurs, and optionally some time is waited once more (`waitAfterPostStage`).
 After the last event is done, UPFG is allowed to take control.
 
+`atoStaging` is only needed when early emergency activation cannot use the normal `staging` sequence. It is most
+useful for a first guided stage that normally enters UPFG as an already-burning sustainer but may need explicit
+separation and ignition during a passive-ascent ATO. All keys and ullage requirements are identical to `staging`.
+
 Ullage modes:
 * `"none"`: nothing but a `STAGE` to ignite the engines directly;
 * `"srb"`: two `STAGE` events, one immediately to ignite the solid rocket ullage motors, and another one after `ullageBurnDuration` to ignite the engines;
@@ -196,10 +258,13 @@ angle    | degrees    | **Used only if** `type` **is** `"roll"`. New roll angle.
 engineTag| `string`   | **Used only if** `type` **is** `"shutdown"`. Engines with this tag will be shut down. **DO NOT** assign this tag to any non-engine part!
 function | [`KOSDelegate`](http://ksp-kos.github.io/KOS_DOC/structures/misc/kosdelegate.html#structure:KOSDELEGATE) | **Used only if** `type` **is** `"delegate"`. Function to be called. Shall expect no arguments.
 action   | `string`   | **Used only if** `type` **is** `"action"`. Name of the action group to toggle (case insensitive).
+escapeJettison | `boolean` | Optional. Set to `TRUE` on the event that removes the launch or payload escape system. A configured `lesPartTag` independently confirms LES jettison when the tagged part disappears.
+structureChange | `boolean` | Optional. Set to `TRUE` when a delegate or action event intentionally changes vessel topology, preventing a false RUD candidate.
 msgPriority| `scalar` | Optional, defines event message priority for `pushUIMessage`. Most likely you don't need to include it.
 isHidden | `boolean`  | (Reserved for internal usage: whether the event is to be displayed in the flight plan.)
 fpMessage| `string`   | (Reserved for internal usage: message to be displayed in the flight plan.)
 _processed| `boolean` | (Reserved for internal usage: detection of sequence analysis errors in `initializeVehicleForUPFG`.)
+_virtualStage| `integer` | (Reserved for internal usage: associates a modeled jettison or shutdown with its virtual stage.)
 
 Unless you're sure you know what you're doing, do not define the `isHidden` key for your events.
 
@@ -212,6 +277,7 @@ Type     | Short\* | Explanation
 print    | p       | Prints `message` in the GUI, nothing else.
 stage    | s       | Hits spacebar (a single `STAGE.` command in kOS).
 jettison | j       | Like `stage` but accounts for the mass lost during the event (subtracting the value under `massLost` key).
+liftoff  | l       | Waits for `minLaunchTWR`, then stages the launch clamps. If `launchTimeout` expires, commands idle throttle, leaves the clamps attached, and terminates PEGAS without firing `ABORT`.
 throttle | t       | Sets the throttle to given value (`throttle` key) - only works during the passive guidance phase.
 shutdown | u       | Shuts down all engines with a specific name tag. This requires not only tagging a part in the editor, but also the engine in `vehicle` config (see above)!
 roll     | r       | Changes the roll component of vehicle attitude (pitch and yaw are dynamically calculated).
@@ -222,6 +288,8 @@ _prestage| N/A     | (Reserved for internal usage)
 _activeon| N/A     | (Reserved for internal usage)
 
 Never create events of a reserved type!
+
+Use `liftoff`, rather than a generic `stage`, for the launch-clamp event at T+0 to enable pad TWR gating.
 
 \* - can be used instead of the full event type name.
 

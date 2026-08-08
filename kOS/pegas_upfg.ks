@@ -1,15 +1,17 @@
+@CLOBBERBUILTINS OFF.
+
 //	Unified Powered Flight Guidance
 
 FUNCTION upfg {
 	DECLARE PARAMETER vehicle.
-	DECLARE PARAMETER target.
+	DECLARE PARAMETER guidanceTarget.
 	DECLARE PARAMETER state.
 	DECLARE PARAMETER previous.
 
-	LOCAL gamma IS target["angle"].
-	LOCAL iy IS target["normal"].
-	LOCAL rdval IS target["radius"].
-	LOCAL vdval IS target["velocity"].
+	LOCAL gamma IS guidanceTarget["angle"].
+	LOCAL iy IS guidanceTarget["normal"].
+	LOCAL rdval IS guidanceTarget["radius"].
+	LOCAL vdval IS guidanceTarget["velocity"].
 	LOCAL t IS state["time"].
 	LOCAL m IS state["mass"].
 	LOCAL r_ IS state["radius"].
@@ -50,6 +52,7 @@ FUNCTION upfg {
 	LOCAL dvsensed IS v_-vprev.
 	LOCAL vgo IS vgo-dvsensed.
 	SET tb[0] TO tb[0] - previous["tb"].
+	LOCAL availableBurnTime IS tb:COPY().
 
 	//	3
 	IF SM[0]=1 {
@@ -69,7 +72,7 @@ FUNCTION upfg {
 		} ELSE Li:ADD( 0 ).
 		SET L TO L + Li[i].
 		IF L>vgo:MAG {
-			RETURN upfg(vehicle:SUBLIST(0,vehicle:LENGTH-1), target, state, previous).
+			RETURN upfg(vehicle:SUBLIST(0,vehicle:LENGTH-1), guidanceTarget, state, previous).
 		}
 	}
 	Li:ADD(vgo:MAG - L).
@@ -86,6 +89,10 @@ FUNCTION upfg {
 		} ELSE {
 			tgoi:ADD(tgoi[i-1] + tb[i]).
 		}
+	}
+	LOCAL burnFeasible IS TRUE.
+	FROM { LOCAL i IS 0. } UNTIL i>=n STEP { SET i TO i+1. } DO {
+		IF tb[i] > availableBurnTime[i] + 0.01 { SET burnFeasible TO FALSE. }
 	}
 
 	LOCAL tgo IS tgoi[n-1].
@@ -206,7 +213,8 @@ FUNCTION upfg {
 		"yaw", yaw,
 		"pitchdot", 0,
 		"yawdot", 0,
-		"tgo", tgo
+		"tgo", tgo,
+		"feasible", burnFeasible
 	).
 	RETURN LIST(current, guidance, dt).
 }

@@ -1,5 +1,30 @@
 ### Change log
 
+## Unreleased
+##### Features:
+* live-TWR-gated pad release with non-ABORT idle-throttle pad shutdown
+* partial engine-failure detection with abort-to-orbit guidance
+* crew and uncrewed payload escape guidance through the standard ABORT action group
+* surface-retrograde ballistic abort fallback after tagged LES jettison when ATO is infeasible
+* optional contingency monitoring by omitting or disabling `controls["abort"]`
+* corroborated rapid-unscheduled-disassembly detection using persistent part identities
+* time-filtered excessive-rotation detection with commanded-roll and staging-transient suppression
+* UPFG burn-duration feasibility reporting for contingency targets
+* abort-to-orbit recovery using the complete remaining stage stack, including automatic emergency upper-stage activation during passive or active ascent
+
+##### Safety:
+* grounded engine failures use pad shutdown instead of firing the `ABORT` action group
+* intentional staging and engine shutdown no longer trigger stale-baseline engine aborts
+* aborts no longer fall through into a later guidance phase
+* pending staging and ullage triggers are invalidated when escape begins
+* RCS is forced on for every abort and remains available after guidance exits
+* LES escape guidance transitions from prograde escape to a retrograde hold through touchdown
+* all shipped KerboScript files explicitly forbid clobbering kOS built-ins
+* ATO staging now keeps virtual-stage events synchronized, verifies upper-stage ignition, preserves its delta-v reserve, and refreshes target-dependent cutoff state
+
+##### Fixes:
+* pad-release TWR excludes Modular Launch Pads parts from vehicle mass
+
 ## [v1.3.1](https://github.com/Noiredd/PEGAS/releases/tag/v1.3.1) "Olympus" bugfix (2026-05-xx)
 Bug fixes and minor features.
 
