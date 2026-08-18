@@ -22,7 +22,8 @@ verticalAscentTime | s     | optional\* | After liftoff, vehicle will fly straig
 pitchOverAngle     | deg   | optional\* | Vehicle will pitch over by that many degrees away from vertical
 pitchProgram       | `lexicon` | optional\* | Vehicle will follow a pitch program given by pitch angle & altitude pairs
 upfgActivation     | s     | required | The active guidance phase will be activated that many seconds after liftoff
-initialRoll        | deg   | optional | Angle to which the vehicle will roll during the initial pitchover maneuver (default is 0)
+rollTime           | s     | optional | Time after liftoff at which to command `rollAngle`; must be provided together with `rollAngle`
+rollAngle          | deg   | optional | Roll angle commanded at `rollTime` and held afterward; must be provided together with `rollTime`
 disableThrustWatchdog | `boolean` | optional | Set to `TRUE` in order to disable loss-of-thrust checking on this vehicle, ignore this key otherwise.
 abort              | `lexicon` | optional | Failure detection, escape guidance, RUD detection, abort-to-orbit, and liftoff-gate configuration. Omitting it disables contingency monitoring but retains the default live-TWR liftoff gate.
 
@@ -63,6 +64,17 @@ Key         | Units | Opt/req   | Meaning
 ---         | ---   | ---       | ---
 `altitude`  | m     | required  | Keypoint altitudes
 `pitch`     | deg   | required  | Desired pitch angle to reach at the corresponding altitude
+
+#### Roll program
+
+Define `rollTime` and `rollAngle` together to perform one roll maneuver independently of the pitch program.
+PEGAS preserves the vehicle's current roll until `rollTime` seconds after actual liftoff, then commands
+`rollAngle` with a short transition and holds it. A later `roll` sequence event overrides this command permanently.
+Roll angles are relative to the launch direction: at `0` degrees, the vehicle's top points opposite
+`mission["launchAzimuth"]` (uprange), including while the vehicle is still vertical.
+The configured maneuver is listed at `rollTime` in the flight-plan UI as `ROLL PROGRAM`.
+If terminal guidance begins before `rollTime`, PEGAS reports that the roll was skipped because terminal guidance
+must arrest all rotation.
 
 #### Abort and escape configuration
 
@@ -280,7 +292,7 @@ jettison | j       | Like `stage` but accounts for the mass lost during the even
 liftoff  | l       | Waits for `minLaunchTWR`, then stages the launch clamps. If `launchTimeout` expires, commands idle throttle, leaves the clamps attached, and terminates PEGAS without firing `ABORT`.
 throttle | t       | Sets the throttle to given value (`throttle` key) - only works during the passive guidance phase.
 shutdown | u       | Shuts down all engines with a specific name tag. This requires not only tagging a part in the editor, but also the engine in `vehicle` config (see above)!
-roll     | r       | Changes the roll component of vehicle attitude (pitch and yaw are dynamically calculated).
+roll     | r       | Changes the roll component of vehicle attitude and cancels the configured roll program (pitch and yaw are dynamically calculated).
 delegate | d       | Calls a function passed as a [kOS delegate](http://ksp-kos.github.io/KOS_DOC/language/delegates.html).
 action   | a       | Toggles an action group. Supported: RCS, LIGHTS, BRAKES, GEAR, AG1...AG10.
 _upfgstage| N/A    | (Reserved for internal usage)

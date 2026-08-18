@@ -132,10 +132,12 @@ From this moment the UPFG is in control over your vehicle, and if you're too low
 It's difficult to provide example numbers, as this variable strongly depends on your vehicle - see the [boot files](../kOS/boot).
 
 ##### Rolling
-Roll control in PEGAS is achieved using two mechanisms.
-First roll maneuver occurs together with the pitchover, by angle given via `initialRoll` key.
-By default (in case the key was not present) vehicle will roll to 0 degrees angle.
-In any time during the flight, roll can be changed during a preprogrammed event (see [`sequence`](#sequence) below).
+Roll control is independent of the pitchover. Set `rollTime` and `rollAngle` in `controls`
+to command one roll maneuver at that many seconds after liftoff. Before then, PEGAS preserves
+the vehicle's current roll. The new target is blended in over one second rather than applied in one frame.
+At zero degrees the vehicle's top points uprange, opposite the launch azimuth, so rolling works during vertical ascent.
+The configured maneuver also appears at `rollTime` in the flight-plan UI as `ROLL PROGRAM`.
+A later `roll` event can change the angle and cancels the configured maneuver.
 
 ### [Vehicle](reference.md#vehicle)
 Physical description of each stage of your vehicle, *as seen by the UPFG algorithm*.
@@ -388,7 +390,8 @@ too late is bad, too early is even worse)
 * `launchTimeAdvance` = 120 (experiment with that if you need to)
 * `verticalAscentTime` = 11
 * `pitchOverAngle` = 2.5 (those two values you need to find for each vehicle yourself)
-* `initialRoll` = 90 (matter of taste, e.g. sometimes you need to correct for misaligned control part)
+* `rollTime` = 10
+* `rollAngle` = 90 (at T+10 seconds, roll to 90 degrees and hold it)
 
 And that's it for the vehicle part.
 In order to fly it, all we need to do is set the `mission` structure,

@@ -120,7 +120,7 @@ FUNCTION farControlGravityTurn {
             SET _farState["pitchoverStarted"] TO TRUE.
             pushUIMessage("FAR: Pitchover at T+" + ROUND(elapsed, 1) + "s  q=" + ROUND(dynQ/1000, 1) + "kPa", 5, PRIORITY_NORMAL).
         }
-        SET steeringVector TO aimAndRoll(HEADING(az, 90):VECTOR, steeringRoll).
+        SET steeringVector TO steerWithRoll(HEADING(az, 90):VECTOR).
     }
 
     //  Phase 1: adaptive pitchover ramp (q-modulated with time-based floor)
@@ -192,7 +192,7 @@ FUNCTION farControlGravityTurn {
     SET _farState["currentPitch"] TO newPitch.
 
     IF _farState["phase"] > 0 {
-        SET steeringVector TO aimAndRoll(HEADING(az, newPitch):VECTOR, steeringRoll).
+        SET steeringVector TO steerWithRoll(HEADING(az, newPitch):VECTOR).
     }
     SET _farState["lastRunTime"] TO now.
 }
@@ -235,7 +235,7 @@ FUNCTION farCorrectPitchProgram {
     SET _farState["currentPitch"] TO curPitch.
 
     SET curPitch TO MAX(0, MIN(90, curPitch)).
-    SET steeringVector TO aimAndRoll(HEADING(mission["launchAzimuth"], curPitch):VECTOR, steeringRoll).
+    SET steeringVector TO steerWithRoll(HEADING(mission["launchAzimuth"], curPitch):VECTOR).
     SET _farState["lastRunTime"] TO now.
 }
 

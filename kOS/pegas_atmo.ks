@@ -5,19 +5,16 @@
 //	Calculate a steering vector for minimal angle of attack flight (surface-relative)
 FUNCTION minAoASteering {
 	//	Expects a global variable "mission" as lexicon.
-	DECLARE PARAMETER desiredRoll IS 0.	//	Expects a scalar
 
 	//	This is not a "zero AoA steering" by following the current surface velocity vector - we still provide azimuth control
 	SET surfVelAngle TO 90 - VANG(SHIP:UP:VECTOR, SHIP:VELOCITY:SURFACE).
-	RETURN aimAndRoll(HEADING(mission["launchAzimuth"], surfVelAngle):VECTOR, desiredRoll).
+	RETURN steerWithRoll(HEADING(mission["launchAzimuth"], surfVelAngle):VECTOR).
 }
 
 //	Passive guidance within the atmosphere
 FUNCTION atmosphericSteeringControl {
 	//	Call the appropriate steering controller, depending on vehicle control settings.
 	//	Expects a global variable "controls" as lexicon.
-
-	DECLARE PARAMETER steeringRoll.	//	Expects a scalar
 
 	//	If the FAR ascent addon has taken over in full-control mode, skip PEGAS
 	//	passive steering to avoid duplicate messages and one-frame conflicts.
@@ -26,9 +23,9 @@ FUNCTION atmosphericSteeringControl {
 	}
 
 	IF controls:HASKEY("pitchProgram") {
-		pitchProgramControl(steeringRoll).
+		pitchProgramControl().
 	} ELSE {
-		zeroAoAPitchControl(steeringRoll).
+		zeroAoAPitchControl().
 	}
 }
 
@@ -45,8 +42,6 @@ FUNCTION zeroAoAPitchControl {
 	//	"SETTINGS" as lexicon
 	//	"steeringVector" as vector
 
-	DECLARE PARAMETER steeringRoll.	//	Expects a scalar
-
 	//	Define the global at first run
 	IF NOT (DEFINED ascentFlag) {
 		//	Basic pitch&hold ascent consists of 4 phases, ascentFlag stores the phase index:
@@ -61,7 +56,7 @@ FUNCTION zeroAoAPitchControl {
 		//	The vehicle is going straight up for given amount of time
 		IF TIME:SECONDS >= liftoffTime:SECONDS + controls["verticalAscentTime"] {
 			//	Then it changes attitude for an initial pitchover "kick"
-			SET steeringVector TO aimAndRoll(HEADING(mission["launchAzimuth"], 90-controls["pitchOverAngle"]):VECTOR, steeringRoll).
+			SET steeringVector TO steerWithRoll(HEADING(mission["launchAzimuth"], 90-controls["pitchOverAngle"]):VECTOR).
 			SET ascentFlag TO 1.
 			pushUIMessage( "Pitching over by " + ROUND(controls["pitchOverAngle"], 1) + " degrees." ).
 		}
@@ -83,13 +78,13 @@ FUNCTION zeroAoAPitchControl {
 	}
 	ELSE IF ascentFlag = 2 {
 		//	Enter the minimal angle of attack phase. This case is different only in that we push a transition message.
-		SET steeringVector TO minAoASteering(steeringRoll).
+		SET steeringVector TO minAoASteering().
 		pushUIMessage( "Holding prograde at " + ROUND(mission["launchAzimuth"], 1) + " deg azimuth." ).
 		SET ascentFlag TO 3.
 	}
 	ELSE {
 		//	Maintain minimal AoA trajectory
-		SET steeringVector TO minAoASteering(steeringRoll).
+		SET steeringVector TO minAoASteering().
 	}
 }
 
@@ -100,8 +95,6 @@ FUNCTION pitchProgramControl {
 	//	Expects global variables:
 	//	"controls" as lexicon
 	//	"steeringVector" as vector
-
-	DECLARE PARAMETER steeringRoll.	//	Expects a scalar
 
 	//	For pretty-printing the linear coefficients
 	FUNCTION toSCI {
@@ -146,6 +139,6 @@ FUNCTION pitchProgramControl {
 	}
 
 	IF pitchProgramIndex >= 0 {
-		SET steeringVector TO aimAndRoll(HEADING(mission["launchAzimuth"], pitchFactorA*SHIP:ALTITUDE+pitchFactorB):VECTOR, steeringRoll).
+		SET steeringVector TO steerWithRoll(HEADING(mission["launchAzimuth"], pitchFactorA*SHIP:ALTITUDE+pitchFactorB):VECTOR).
 	}
 }

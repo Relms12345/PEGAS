@@ -383,7 +383,9 @@ FUNCTION makeMessage {
 	DECLARE PARAMETER event.
 
 	LOCAL eType IS event["type"].
-	IF      eType = "print" OR eType = "p" { }
+	IF      eType = "print" OR eType = "p" {
+		IF event:HASKEY("fpMessage") { RETURN event["fpMessage"]. }
+	}
 	ELSE IF eType = "stage" OR eType = "s" {
 		RETURN "Staging event".
 	}

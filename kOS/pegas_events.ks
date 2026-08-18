@@ -297,6 +297,7 @@ FUNCTION userEvent_liftoff {
 		STAGE.
 		// Subsequent sequence entries and guidance state use actual clamp-release time as T0.
 		SET liftoffTime TO TIME.
+		SET liftoffOccurred TO TRUE.
 		RETURN TRUE.
 	}
 	IF TIME:SECONDS >= abort_liftoffGateDeadline {
@@ -572,7 +573,7 @@ FUNCTION userEvent_shutdown {
 FUNCTION userEvent_roll {
 	DECLARE PARAMETER event.	//	Expects a lexicon
 
-	SET steeringRoll TO event["angle"].
+	commandRoll(event["angle"]).
 	IF NOT event:HASKEY("message") {
 		event:ADD("message", "Rolling to " + steeringRoll + " degrees.").
 	}

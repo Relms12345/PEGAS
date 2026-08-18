@@ -2,6 +2,7 @@
 
 ## Unreleased
 ##### Features:
+* optional time-based, launch-relative roll maneuver using `controls["rollTime"]` and `controls["rollAngle"]`, with smooth target transitions and a flight-plan marker
 * live-TWR-gated pad release with non-ABORT idle-throttle pad shutdown
 * partial engine-failure detection with abort-to-orbit guidance
 * crew and uncrewed payload escape guidance through the standard ABORT action group
@@ -13,6 +14,7 @@
 * abort-to-orbit recovery using the complete remaining stage stack, including automatic emergency upper-stage activation during passive or active ascent
 
 ##### Safety:
+* vehicle control is selected before the initial attitude is captured, preventing spurious liftoff rolls
 * grounded engine failures use pad shutdown instead of firing the `ABORT` action group
 * intentional staging and engine shutdown no longer trigger stale-baseline engine aborts
 * aborts no longer fall through into a later guidance phase

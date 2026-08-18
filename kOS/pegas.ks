@@ -16,6 +16,7 @@ IF SETTINGS["cserVersion"] = "new" {
 RUN pegas_events.
 RUN pegas_upfg.
 RUN pegas_util.
+RUN pegas_roll.
 RUN pegas_misc.
 RUN pegas_abort.
 RUN pegas_comm.
@@ -24,6 +25,9 @@ RUN pegas_addons.
 //	The following is absolutely necessary to run UPFG fast enough.
 SET CONFIG:IPU TO SETTINGS["kOS_IPU"].
 
+// Ensure the initial attitude is captured from the part that will control the vehicle.
+CORE:PART:CONTROLFROM().
+
 //	Initialize global flags and constants
 GLOBAL upfgStage IS -1.				//	System initializes at passive guidance
 GLOBAL eventPointer IS -1.			//	Index of the last executed event (-1 means none yet)
@@ -31,6 +35,12 @@ GLOBAL throttleSetting IS 1.		//	This is what actually controls the throttle,
 GLOBAL throttleDisplay IS 1.		//	and this is what to display on the GUI - see throttleControl() for details.
 GLOBAL steeringVector IS LOOKDIRUP(SHIP:FACING:FOREVECTOR, SHIP:FACING:TOPVECTOR).
 GLOBAL steeringRoll IS 0.
+GLOBAL rollControlActive IS FALSE.
+GLOBAL rollProgramComplete IS FALSE.
+GLOBAL rollTransitionStarted IS FALSE.
+GLOBAL rollTransitionStartAngle IS 0.
+GLOBAL rollTransitionStartTime IS 0.
+GLOBAL liftoffOccurred IS FALSE.
 GLOBAL activeGuidanceMode IS FALSE.	//	Set to TRUE at UPFG activation time (as defined in controls)
 GLOBAL upfgConverged IS FALSE.		//	See upfgSteeringControl comments
 GLOBAL upfgEngaged IS FALSE.		//	See upfgSteeringControl comments
@@ -59,14 +69,11 @@ IF timeToOrbitIntercept < controls["launchTimeAdvance"] {
 IF NOT mission:HASKEY("launchAzimuth") {
 	mission:ADD("launchAzimuth", launchAzimuth()).
 }
-//	Read initial roll angle (to be executed during the pitchover maneuver)
-IF controls:HASKEY("initialRoll") {
-	SET steeringRoll TO controls["initialRoll"].
-}
 //	Set up the system for flight
 setVehicle().			//	Complete vehicle definition (as given by user)
 initAbortSystem().
 spawnCountdownEvents().
+spawnRollProgramMessage().
 buildFlightPlan(TRUE).	//	Generate the printable events before drawing the UI
 callHooks("init").		//	System initialized, run hooks
 
@@ -89,8 +96,10 @@ UNTIL abortState["mode"] = "escape" {
 	IF abortState["mode"] = "escape" OR abortState["pendingStageOrdinal"] >= 0 { BREAK. }
 	//	Communication system handling
 	commsHandler().
+	//	Scheduled roll control
+	rollProgramControl().
 	//	Passive guidance
-	atmosphericSteeringControl(steeringRoll).
+	atmosphericSteeringControl().
 	//	The passive guidance loop ends a few seconds before actual ignition of the first UPFG-controlled stage.
 	//	This is to give UPFG time to converge. Actual ignition occurs via stagingEvents.
 	IF TIME:SECONDS >= liftoffTime:SECONDS + controls["upfgActivation"] - SETTINGS["upfgConvergenceDelay"] {
@@ -133,6 +142,8 @@ IF abortState["mode"] <> "escaped" {
 		IF abortState["mode"] = "escape" { BREAK. }
 		//	Communication system handling
 		commsHandler().
+		//	Scheduled roll control
+		rollProgramControl().
 		//	Update UPFG target and vehicle state
 		SET upfgTarget["normal"] TO targetNormal(mission["inclination"], mission["LAN"]).
 		SET upfgState TO acquireState().
@@ -161,6 +172,7 @@ IF abortState["mode"] <> "escaped" {
 IF abortState["mode"] <> "escaped" {
 	//	Final orbital insertion loop
 	SET flightPhase TO "terminal".
+	closeRollProgram().
 	pushUIMessage( "Holding attitude for burn finalization!" ).
 	LOCK STEERING TO "KILL".
 	SET previousTime TO TIME:SECONDS.

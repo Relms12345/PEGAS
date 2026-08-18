@@ -19,15 +19,6 @@ FUNCTION rodrigues {
 	RETURN outVector.
 }
 
-//	Returns a kOS direction for given aim vector and roll angle
-FUNCTION aimAndRoll {
-	DECLARE PARAMETER aimVec.	//	Expects a vector
-	DECLARE PARAMETER rollAng.	//	Expects a scalar
-
-	LOCAL rollVector IS rodrigues(UP:VECTOR, aimVec, -rollAng).
-	RETURN LOOKDIRUP(aimVec, rollVector).
-}
-
 //	KSP-MATLAB-KSP vector conversion
 FUNCTION vecYZ {
 	DECLARE PARAMETER input.	//	Expects a vector
@@ -420,6 +411,22 @@ FUNCTION checkControls {
 		IF NOT (hasPOA AND hasVAT) {
 			SET errorsFound TO TRUE.
 			PRINT "Passive guidance misconfigured: missing keys!".
+		}
+	}
+
+	// A scheduled roll requires both its activation time and target angle.
+	LOCAL hasRollTime IS controls:HASKEY("rollTime").
+	LOCAL hasRollAngle IS controls:HASKEY("rollAngle").
+	IF hasRollTime <> hasRollAngle {
+		SET errorsFound TO TRUE.
+		PRINT "Roll program misconfigured: rollTime and rollAngle must be defined together!".
+	} ELSE IF hasRollTime {
+		IF NOT controls["rollTime"]:ISTYPE("Scalar") OR NOT controls["rollAngle"]:ISTYPE("Scalar") {
+			SET errorsFound TO TRUE.
+			PRINT "Roll program misconfigured: rollTime and rollAngle must be scalars!".
+		} ELSE IF controls["rollTime"] < 0 {
+			SET errorsFound TO TRUE.
+			PRINT "Roll program misconfigured: rollTime cannot be negative!".
 		}
 	}
 
@@ -953,7 +960,6 @@ FUNCTION upfgSteeringControl {
 	//	"upfgEngaged" as bool
 	//	"stagingInProgress" as bool
 	//	"steeringVector" as vector
-	//	"steeringRoll" as scalar
 	//	"liftoffTime" as timespan
 	//	"vehicle" as list
 	//	"controls" as lexicon
@@ -1036,13 +1042,13 @@ FUNCTION upfgSteeringControl {
 		}
 		ELSE IF upfgConverged {
 			//	Only now we're good to go
-			SET steeringVector TO aimAndRoll(vecYZ(upfgOutput[1]["vector"]), steeringRoll).
+			SET steeringVector TO steerWithRoll(vecYZ(upfgOutput[1]["vector"])).
 			SET usc_lastGoodVector TO upfgOutput[1]["vector"].
 			SET upfgEngaged TO TRUE.
 		}
 	} ELSE {
 		// This case triggers when we're in the initial pre-convergence mode.
-		atmosphericSteeringControl(steeringRoll).	// Defer to atmospheric mode
+		atmosphericSteeringControl().	// Defer to atmospheric mode
 	}
 	RETURN upfgOutput[0].
 }

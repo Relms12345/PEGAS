@@ -19,6 +19,9 @@ GLOBAL SETTINGS IS LEXICON(
 	//	When time-to-go gets below that, keep attitude stable and simply count down time to cutoff.
 	"upfgFinalizationTime", 5,
 
+	// Blend into a new roll command instead of changing the steering reference in one frame.
+	"rollTransitionTime", 1,
+
 	//	Updating attitude commands will be forbidden that many seconds before staging (in an attempt to keep vehicle steady for a clean separation).
 	"stagingKillRotTime", 5,
 

@@ -37,7 +37,6 @@ GLOBAL sequence IS LIST(
 					LEXICON("time", -3.7, "type", "stage", "message", "RD-180 ignition"),
 					LEXICON("time", 0, "type", "liftoff", "message", "LIFTOFF"),
 					LEXICON("time", 100, "type", "stage", "message", "SRB jettison"),
-					LEXICON("time", 105, "type", "roll", "angle", 90),
 					LEXICON("time", 210, "type", "jettison", "message", "PLF jettison", "massLost", 4400),
 					LEXICON("time", 215, "type", "stage", "message", "CFLR jettison"),
 					LEXICON("time", 260, "type", "roll", "angle", 0)
@@ -46,6 +45,8 @@ GLOBAL controls IS LEXICON(
 					"launchTimeAdvance", 150,
 					"verticalAscentTime", 7,	//	7 seconds work well for 5t payload, 8 good for 15t
 					"pitchOverAngle", 10,
+					"rollTime", 105,
+					"rollAngle", 90,
 					"upfgActivation", 115,
 					"abort", LEXICON(
 						"escapeSystem", "none"
