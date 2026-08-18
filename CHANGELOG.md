@@ -26,6 +26,9 @@
 
 ##### Fixes:
 * pad-release TWR excludes Modular Launch Pads parts from vehicle mass
+* fuel residuals remain non-burnable through first-stage sustainer updates, virtual-stage splits, and abort calculations
+* normal and ATO staging share mode-aware delay calculations; RCS ullage remains sequential while hot-stage separation overlaps spool-up
+* invalid residual percentages and negative staging delays are rejected before launch
 
 ## [v1.3.1](https://github.com/Noiredd/PEGAS/releases/tag/v1.3.1) "Olympus" bugfix (2026-05-xx)
 Bug fixes and minor features.

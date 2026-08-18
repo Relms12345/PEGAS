@@ -443,6 +443,27 @@ FUNCTION checkControls {
 	}
 }
 
+//	Validate optional timing values shared by normal and ATO staging configurations
+FUNCTION validateStagingDelays {
+	DECLARE PARAMETER staging.
+	DECLARE PARAMETER stageLabel.
+
+	LOCAL valid IS TRUE.
+	FOR key IN LIST("waitBeforeJettison", "waitBeforeIgnition", "ullageBurnDuration",
+		"postUllageBurn", "waitBeforePostStage", "waitAfterPostStage") {
+		IF staging:HASKEY(key) {
+			IF NOT staging[key]:ISTYPE("Scalar") {
+				PRINT "Vehicle error: " + stageLabel + " '" + key + "' must be a scalar".
+				SET valid TO FALSE.
+			} ELSE IF staging[key] < 0 {
+				PRINT "Vehicle error: " + stageLabel + " '" + key + "' cannot be negative".
+				SET valid TO FALSE.
+			}
+		}
+	}
+	RETURN valid.
+}
+
 //	Setup vehicle: transform user input to UPFG-compatible struct
 FUNCTION setVehicle {
 	//	Calculates missing mass inputs (user gives any 2 of 3: total, dry, fuel mass)
@@ -471,7 +492,18 @@ FUNCTION setVehicle {
 		}
 		//	Handle residuals
 		IF NOT vst:HASKEY("residuals")		{ vst:ADD("residuals", 0.0). }
+		IF NOT vst["residuals"]:ISTYPE("Scalar") {
+			PRINT "Vehicle error: residuals must be a scalar in stage " + i.
+			SET errorsFound TO TRUE.
+			SET vst["residuals"] TO 0.0.
+		} ELSE IF vst["residuals"] < 0 OR vst["residuals"] >= 100 {
+			PRINT "Vehicle error: residuals must be at least 0 and less than 100 percent in stage " + i.
+			SET errorsFound TO TRUE.
+			SET vst["residuals"] TO 0.0.
+		}
 		SET vst["massFuel"] TO vst["massFuel"] * (1 - vst["residuals"] / 100.0).
+		//	Residual propellant remains aboard, but is unavailable to guidance as fuel.
+		SET vst["massDry"] TO vst["massTotal"] - vst["massFuel"].
 		//	Default fields: gLim, minThrottle, throttle, mode
 		IF NOT vst:HASKEY("gLim")			{ vst:ADD("gLim", 0). }
 		IF NOT vst:HASKEY("minThrottle")	{ vst:ADD("minThrottle", 0). }
@@ -526,11 +558,23 @@ FUNCTION setVehicle {
 					SET errorsFound TO TRUE.
 				}
 			}
+			IF NOT validateStagingDelays(vst["staging"], "staging in stage " + i) {
+				SET errorsFound TO TRUE.
+			}
 		}
 		//	Add the shutdown flag - it is optional, but functions rely on its presence
 		IF NOT vst:HASKEY("shutdownRequired") { vst:ADD("shutdownRequired", FALSE). }
 		//	Same with the spoolup config - by default assume instant activation (legacy behavior)
 		IF NOT vst:HASKEY("spoolup") { vst:ADD("spoolup", 0.0). }
+		IF NOT vst["spoolup"]:ISTYPE("Scalar") {
+			PRINT "Vehicle error: spoolup must be a scalar in stage " + i.
+			SET errorsFound TO TRUE.
+			SET vst["spoolup"] TO 0.0.
+		} ELSE IF vst["spoolup"] < 0 {
+			PRINT "Vehicle error: spoolup cannot be negative in stage " + i.
+			SET errorsFound TO TRUE.
+			SET vst["spoolup"] TO 0.0.
+		}
 		//	Calculate max burn time
 		LOCAL combinedEngines IS getThrust(vst["engines"]).
 		vst:ADD("maxT", vst["massFuel"] / combinedEngines[1]).
@@ -567,6 +611,9 @@ FUNCTION setVehicle {
 					SET errorsFound TO TRUE.
 				}
 			}
+			IF NOT validateStagingDelays(atoStaging, "atoStaging in stage " + i) {
+				SET errorsFound TO TRUE.
+			}
 		}
 		//	Internal flags
 		vst:ADD("followedByVirtual", FALSE).
@@ -590,24 +637,31 @@ FUNCTION setVehicle {
 	}
 }
 
-//	Calculate the sum of all delays before the actual ignition of a given stage
-FUNCTION getStageDelays {
-	DECLARE PARAMETER thisStage.    //	Expects a lexicon.
+//	Calculate the delay before a stage begins its modeled full-thrust burn
+FUNCTION getStagingDelays {
+	DECLARE PARAMETER thisStage.	//	Expects a stage lexicon.
+	DECLARE PARAMETER staging.	//	Expects its normal or ATO staging lexicon.
 
-	LOCAL staging IS thisStage["staging"].
 	LOCAL totalDelays IS 0.
-	IF staging:HASKEY("waitBeforeJettison") {
+	LOCAL isHotStage IS staging:HASKEY("ullage") AND staging["ullage"] = "hot".
+	//	Hot-stage separation occurs after ignition and overlaps engine spool-up.
+	IF staging:HASKEY("waitBeforeJettison") AND NOT isHotStage {
 		SET totalDelays TO totalDelays + staging["waitBeforeJettison"].
 	}
 	IF staging:HASKEY("waitBeforeIgnition") {
 		SET totalDelays TO totalDelays + staging["waitBeforeIgnition"].
 	}
-	IF staging:HASKEY("ullageBurnDuration") {
+	IF staging:HASKEY("ullage") AND LIST("rcs", "srb"):FIND(staging["ullage"]) >= 0 {
 		SET totalDelays TO totalDelays + staging["ullageBurnDuration"].
 	}
 	SET totalDelays TO totalDelays + thisStage["spoolup"].
 
 	RETURN totalDelays.
+}
+
+FUNCTION getStageDelays {
+	DECLARE PARAMETER thisStage.
+	RETURN getStagingDelays(thisStage, thisStage["staging"]).
 }
 
 //	Find the first event of (one of) a given type occurring after a given time
@@ -798,7 +852,8 @@ FUNCTION initializeVehicleForUPFG {
 		//	a known amount of time prior to that (defined in SETTINGS["upfgConvergenceDelay"]), we can calculate that.
 		LOCAL combinedEngines IS getThrust(vehicle[0]["engines"]).
 		SET vehicle[0]["massTotal"] TO SHIP:MASS*1000 - combinedEngines[1]*SETTINGS["upfgConvergenceDelay"].
-		SET vehicle[0]["massFuel"] TO vehicle[0]["massTotal"] - vehicle[0]["massDry"].
+		//	massDry includes the configured residual reserve after setVehicle normalization.
+		SET vehicle[0]["massFuel"] TO MAX(0, vehicle[0]["massTotal"] - vehicle[0]["massDry"]).
 		SET vehicle[0]["maxT"] TO vehicle[0]["massFuel"] / combinedEngines[1].
 		SET vehicle[0]["isSustainer"] TO TRUE.
 	}

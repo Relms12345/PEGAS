@@ -428,12 +428,7 @@ FUNCTION resetAtoGuidance {
 FUNCTION getAtoStageDelays {
 	DECLARE PARAMETER stageIndex.
 	IF NOT vehicle[stageIndex]:HASKEY("atoStaging") { RETURN getStageDelays(vehicle[stageIndex]). }
-	LOCAL staging IS vehicle[stageIndex]["atoStaging"].
-	LOCAL totalDelays IS vehicle[stageIndex]["spoolup"].
-	IF staging:HASKEY("waitBeforeJettison") { SET totalDelays TO totalDelays + staging["waitBeforeJettison"]. }
-	IF staging:HASKEY("waitBeforeIgnition") { SET totalDelays TO totalDelays + staging["waitBeforeIgnition"]. }
-	IF staging:HASKEY("ullageBurnDuration") { SET totalDelays TO totalDelays + staging["ullageBurnDuration"]. }
-	RETURN totalDelays.
+	RETURN getStagingDelays(vehicle[stageIndex], vehicle[stageIndex]["atoStaging"]).
 }
 
 FUNCTION atoStageCanActivate {

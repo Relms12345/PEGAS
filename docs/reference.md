@@ -150,7 +150,7 @@ minThrottle      | (0.0-1.0)  | optional\*\*| Minimum possible throttle of this 
 throttle         | (0.0-1.0)  | optional  | Nominal throttle for this stage's engines (default = 1.0)
 shutdownRequired | `boolean`  | optional  | Explicitly shut down this stage's engines before activation of the next stage\*\*\*, \*\*\*\*
 spoolup          | s          | optional  | How long does it take for this stage's engines to spool up to max thrust (default = 0.0)
-residuals        | %          | optional  | Predicted amount of fuel residuals on this stage (e.g. if GUI says 1.13% put `1.13` here; default = 0.0)
+residuals        | [0, 100) % | optional  | Predicted unavailable fuel remaining on this stage (e.g. if GUI says 1.13% put `1.13` here; default = 0.0)
 engines          | `list`     | required  | Parameters of each engine in the stage (details further)
 staging          | `lexicon`  | required  | Description of method of activation of this stage (details further)
 atoStaging       | `lexicon`  | optional  | Emergency activation sequence used when ATO starts this stage early; follows the same schema as `staging`
@@ -166,6 +166,8 @@ PEGAS creates those keys for its own purposes - read `initializeVehicleForUPFG` 
 
 \* - of the three fields, `massTotal`, `massFuel` and `massDry`, one can be skipped, but **two** have to be given.  
 \*\* - required if `gLim` is given.  
+Fuel excluded by `residuals` remains part of `massTotal`; internally PEGAS treats it as effective dry mass so it is
+preserved through sustainer mass updates and virtual stages but cannot extend the predicted burn.
 \*\*\* - PEGAS attempts to schedule staging exactly in the moment the stage runs out of fuel, so normally this should have no effect
 (engines on each stage shut down by flaming out).
 However, a vehicle with a reusable booster can be configured to not burn all of its fuel during ascent
@@ -208,7 +210,7 @@ waitBeforeJettison | s          | if `jettison` is `TRUE`         | Wait between
 ignition           | `boolean`  | always                          | Does the current stage need to be explicitly ignited?
 waitBeforeIgnition | s          | if `ignition` is `TRUE`         | Wait between jettison and ignition sequence start.
 ullage             | `string`   | if `ignition` is `TRUE`         | Does the current stage need an ullage burn? Allowed values: `"none"`, `"srb"`, `"rcs"`, `"hot"`.
-ullageBurnDuration | s          | if `ullage` is **not** `"none"` | Wait between ullage sequence start and engine ignition.
+ullageBurnDuration | s          | if `ullage` is `"srb"` or `"rcs"` | Wait between ullage sequence start and engine ignition.
 postUllageBurn     | s          | if `ullage` is `"rcs"`          | Wait between engine ignition and RCS ullage push disengagement.
 postStageEvent     | `boolean`  | no                              | Does the current stage require an additional jettison _after_ ignition (e.g. for Saturn V S-II interstage\*)?
 waitBeforePostStage| s          | if `postStageEvent` is `TRUE`   | Wait after all staging activities before performing post stage jettison.
@@ -235,6 +237,9 @@ Ullage modes:
 * `"rcs"`: activate RCS and immediately fire full forward, wait `ullageBurnDuration` before hitting `STAGE` to ignite the engines, and wait `postUllageBurn` before shutting down RCS (to maintain ullage push while the engines spool up);
 * `"hot"` - special mode in which jettison and ignition are **inverted**: the whole staging process starts with `waitBeforeIgnition` and igniting the engines, then `waitBeforeJettison` and jettisoning the previous stage, the rest continues normally;
 of course you need the decouple/ignition events swapped in the VAB as well.
+
+`postUllageBurn` and hot-stage `waitBeforeJettison` occur after ignition and overlap the powered burn. They are therefore
+not added to the predicted delay before the stage begins burning. All configured staging durations must be nonnegative.
 
 One could think that `"hot"` doesn't really do anything,
 since it's the same two staging operations and all the difference is in the VAB stage order -
